@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-beta.2 — 2026-11-09
 
 * New terminal display: one block per match with a GOOD / OK / FAR hint (`--max-ping`), a live ping graph on a
   single line, readable loss alerts and end-of-match summary, speed test table.
