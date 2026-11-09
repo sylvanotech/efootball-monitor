@@ -9,7 +9,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::geo::GeoDb;
-use crate::util::{out, Micros};
+use crate::util::{fmt_hms, latency_color, out, rule, Micros, DIM, RESET};
 
 pub const SPEED_PORTS: [u16; 4] = [5521, 10000, 30000, 50000];
 
@@ -131,18 +131,16 @@ impl SpeedServers {
                 self.servers
                     .push(SpeedServer::new(server_ip, &geo.city(server_ip), port));
                 out(format!(
-                    "Found a new speed server {}:{}  Total: {}  {}\n",
-                    server_ip,
-                    port,
-                    self.servers.len(),
-                    geo.area(server_ip)
+                    "  {DIM}speed test server found: {} ({} known){RESET}\n",
+                    geo.area(server_ip),
+                    self.servers.len()
                 ));
                 self.should_print = true;
                 self.servers.len() - 1
             }
         };
         if self.pending.len() >= MAX_PENDING {
-            out("Warning: Test record buffer full!\n");
+            out("  ! speed test: too many pending requests, some are ignored\n");
             return;
         }
         self.servers[idx].requests += 1;
@@ -207,87 +205,89 @@ impl SpeedServers {
         v
     }
 
-    /// Brief table printed automatically after a test burst.
+    /// Short table printed automatically after a test burst.
     pub fn print_brief(&self, now: Micros) {
-        let mut s = String::from("        server [min(ms)/avg(ms)] success/Total\n");
-        for (n, sv) in self
-            .sorted()
-            .into_iter()
-            .filter(|s| s.responses > 0)
-            .enumerate()
-        {
-            if n % 3 == 0 && n != 0 {
-                s.push('\n');
-            }
+        let mut s = format!("\n{}\n", rule(&format!("Speed test - {}", fmt_hms(now))));
+        for sv in self.sorted().into_iter().filter(|s| s.responses > 0) {
+            let avg = sv.avg().round() as i64;
+            let lost = sv.requests.saturating_sub(sv.responses);
             s.push_str(&format!(
-                "{:>18}[{:3}/{:3.0}ms] {}/{}  ",
-                sv.region,
+                "  {:<28} {}{:>4} ms{RESET}  {DIM}min {:>3}{RESET}  {}/{}",
+                sv.region.replace('_', " "),
+                latency_color(avg),
+                avg,
                 sv.min,
-                sv.avg(),
                 sv.responses,
                 sv.requests
             ));
+            if lost > 0 {
+                s.push_str(&format!(
+                    "  {}% lost",
+                    (lost as f64 * 100.0 / sv.requests as f64).round()
+                ));
+            }
+            s.push('\n');
         }
-        s.push_str(&format!(
-            "\n\n=== Speed Test Results Last updated: {}\n",
-            crate::util::fmt_full(now)
-        ));
+        s.push_str(&format!("  {DIM}Type 'speed' for details.{RESET}\n"));
         out(s);
     }
 
-    /// Detailed table (`sp` command).
+    /// Detailed table (`speed` command).
     pub fn print_detail(&self, geo: &GeoDb) {
-        let mut s = String::from(
-            "Server               Min(ms) Max(ms) Avg(ms) Loss% Success/Total  Region             \n\
-             -------------------   ------- ------- ------- ------ ------------  ----------------  \n",
+        let mut s = format!(
+            "\n  {:<44} {:>5} {:>5} {:>5} {:>6}  {}\n",
+            "Server", "min", "avg", "max", "loss", "answered"
         );
-        for (i, sv) in self.sorted().into_iter().enumerate() {
+        for sv in self.sorted() {
             let loss = if sv.requests > 0 {
                 (1.0 - sv.responses as f64 / sv.requests as f64) * 100.0
             } else {
                 100.0
             };
+            let mut name = geo.area(&sv.ip);
+            let cloud = crate::cloud::describe(&sv.ip);
+            if crate::cloud::lookup(&sv.ip).is_some() && cloud != name {
+                name = format!("{name} ({cloud})");
+            }
+            let name: String = name.chars().take(44).collect();
             if sv.responses > 0 {
+                let avg = sv.avg().round() as i64;
                 s.push_str(&format!(
-                    "{:2} {}:{:<5} {:7} {:7} {:7.0} {:7.0}% {}/{}  {:<30} \n",
-                    i,
-                    sv.ip,
-                    sv.port,
+                    "  {:<44} {:>5} {}{:>5}{RESET} {:>5} {:>5.0}%  {}/{}\n",
+                    name,
                     sv.min,
+                    latency_color(avg),
+                    avg,
                     sv.max,
-                    sv.avg(),
                     loss,
                     sv.responses,
-                    sv.requests,
-                    geo.area(&sv.ip)
+                    sv.requests
                 ));
             } else {
                 s.push_str(&format!(
-                    "{:2} {}:{:<5} {:>7} {:>7} {:>7} {:7.0}% {}/{}(No response)  {:<30} \n",
-                    i,
-                    sv.ip,
-                    sv.port,
-                    "-",
-                    "-",
-                    "-",
-                    loss,
-                    sv.responses,
-                    sv.requests,
-                    geo.area(&sv.ip)
+                    "  {DIM}{:<44} {:>5} {:>5} {:>5} {:>5.0}%  {}/{} no answer{RESET}\n",
+                    name, "-", "-", "-", loss, sv.responses, sv.requests
                 ));
             }
+        }
+        if self.servers.is_empty() {
+            s.push_str("  No speed test seen yet. It runs when you start searching for a match.\n");
         }
         out(s);
     }
 
-    /// `hh` command.
+    /// `servers` command.
     pub fn print_list(&self) {
-        let mut s = String::new();
+        let mut s = String::from("\n");
         for sv in &self.servers {
             s.push_str(&format!(
-                "{{\"{}\", \"{}\", {}}},\n",
-                sv.ip, sv.region, sv.port
+                "  {:<40} {}\n",
+                format!("{}:{}", sv.ip, sv.port),
+                sv.region.replace('_', " ")
             ));
+        }
+        if self.servers.is_empty() {
+            s.push_str("  No speed test server known yet.\n");
         }
         out(s);
     }

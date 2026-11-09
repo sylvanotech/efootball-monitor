@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+* New terminal display: one block per match with a GOOD / OK / FAR hint (`--max-ping`), a live ping graph on a
+  single line, readable loss alerts and end-of-match summary, speed test table.
+* IP addresses hidden by default (`--show-ip` to show them).
+* Commands renamed: `speed`, `servers`, `help` (the old `sp` and `hh` still work).
+* `--ascii` for consoles without Unicode block characters.
+
 ## 0.1.0-beta.1 — 2026-11-09
 
 First public version (beta: not yet validated on a large number of real matches).

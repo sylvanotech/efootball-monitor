@@ -52,11 +52,11 @@ L'outil n'accepte et ne refuse rien à ta place, c'est toi qui décides dans le 
 - Affiche la région cloud du serveur (Google Cloud ou AWS, ex. `asia-northeast1`, `eu-west-3`), ou le pays et la
   ville de l'adversaire si tu ajoutes la base IP2Location.
 - Mesure le temps de réponse du serveur au début du match à partir de l'échange de connexion du jeu, puis la latence
-  chaque seconde sous forme de points colorés.
+  chaque seconde sous forme de petit graphique, avec un avis GOOD / OK / FAR pour t'aider à accepter ou refuser.
 - Calcule la perte de paquets (serveur/adversaire vers toi) et affiche une ligne quand elle varie de plus de 4 points.
 - Bip quand un match est trouvé, la fenêtre peut rester réduite.
 - Décode le test de vitesse que le jeu lance avant le matchmaking : latence et pertes vers chaque serveur Konami
-  testé (commande `sp`).
+  testé (commande `speed`).
 - Enregistre chaque match dans `matchlogs.csv` (durée, serveur, latence, pire perte). Au bout de quelques soirées, tu
   vois quels serveurs et quels horaires te réussissent.
 - Petite fenêtre toujours au premier plan avec le match en cours (`--overlay`, Windows), ou un fichier texte pour un
@@ -70,16 +70,19 @@ routeur ou switch sait faire du port mirroring.
 ## Exemple
 
 ```text
-21:04:12   1    client-server (Google Cloud asia-northeast1) match from  Japan-Tokyo-Tokyo
-                local 192.168.1.20:52114  Remote 34.84.43.65:30123
-  38ms 41 39 40 40 42.......o..   41
-21:07:55 fluctuation: 12.5% loss
-...
-UTC 2026/11/09 20:13:40 Client-server match ended, cancelled or switched to TCP
-summary:  elapse 09:28 latency: initial/avg/min/max 38/41/38/97   Max loss rate: 12.5%
+── Match 3 - 21:04:12 ──────────────────────────────────────
+  Client-server - Japan-Tokyo-Tokyo (Google Cloud asia-northeast1)
+  Ping 182 ms   FAR - consider declining
+
+── Match 4 - 21:05:40 ──────────────────────────────────────
+  Client-server - France-Ile-de-France-Paris (AWS eu-west-3)
+  Ping 38 ms   GOOD
+  ! 21:07:55 packet loss 12.5% (was 0.0%)
+  ping ▁▁▂▁▁▁▃▁▁▂▁▁▁▅▁▁▁▂▁▁  41 ms   loss 0.0%   09:28
+  Match over - 9 min 28 s - ping avg 41 ms (min 38, max 97) - worst loss 12.5%
 ```
 
-(Valeurs inventées. Dans le terminal, les points sont colorés selon la latence.)
+(Valeurs inventées. Dans le terminal, le ping et les barres sont colorés : vert, jaune, orange, rouge.)
 
 ## Démarrage rapide (Windows)
 
@@ -136,8 +139,9 @@ efootball-monitor --list       # affiche juste la liste des cartes
 
 Pendant que ça tourne, tu peux taper :
 
-- `sp` + Entrée : détail du test de vitesse (latence min/max/moy et pertes par serveur Konami)
-- `hh` + Entrée : serveurs de test trouvés jusqu'ici
+- `speed` + Entrée : détail du test de vitesse (latence min/moy/max et pertes par serveur Konami)
+- `servers` + Entrée : serveurs de test trouvés jusqu'ici, avec leurs adresses
+- `help` + Entrée : commandes et couleurs
 
 Options :
 
@@ -150,39 +154,38 @@ Options :
 | `--overlay` | désactivé | petite fenêtre toujours au premier plan avec le match en cours (Windows). Glisse-la pour la déplacer, clic droit pour la cacher jusqu'au prochain match |
 | `--overlay-file <FICHIER>` | désactivé | écrit l'état en direct dans un fichier texte (source texte OBS etc.) |
 | `--record <FICHIER>` | désactivé | enregistre aussi le trafic du jeu dans un `.pcap` |
+| `--max-ping <MS>` | `120` | les matchs à ce ping ou plus sont marqués `FAR` |
+| `--show-ip` | désactivé | affiche les adresses IP et les ports (masqués par défaut) |
+| `--ascii` | désactivé | caractères simples, si le graphique s'affiche en carrés dans une vieille console |
 
 ## Lire l'affichage
 
-Au début d'un match : l'heure, le numéro du match, le mode, le fournisseur/la localisation du serveur, et les adresses
-locale et distante. En client-server, le nombre cyan est le temps de réponse du serveur au début du match.
+**Quand un match est trouvé**, un bloc s'affiche avec le numéro et l'heure du match, le mode (client-server ou
+peer-to-peer), où part le match, et le ping mesuré par le jeu lui-même au début du match, avec un avis :
 
-Pendant un match client-server, le serveur est sondé chaque seconde (connexion TCP, ou ping pour les serveurs sur le
-port 5735). Les cinq premières valeurs s'affichent en chiffres, ensuite un caractère par seconde :
+- `GOOD` : moins de 60 ms
+- `OK` : entre 60 ms et la limite `--max-ping` (120 ms par défaut)
+- `FAR - consider declining` : à la limite ou au-dessus, mieux vaut refuser
 
-| Caractère | Latence |
-|---|---|
-| `.` blanc | < 15 ms |
-| `.` vert | < 30 ms |
-| `.` jaune | < 50 ms |
-| `.` bleu | < 75 ms |
-| `.` magenta | < 100 ms |
-| `o` cyan | < 125 ms |
-| `O` bleu | < 150 ms |
-| `P` magenta | < 200 ms |
-| `Q` rouge | < 250 ms |
-| `R` rouge | < 400 ms |
-| `X` rouge | 400 ms ou plus, ou pas de réponse |
+**Pendant le match**, une ligne se met à jour chaque seconde : un petit graphique des 40 dernières secondes (une
+barre par seconde, plus haute = plus lent), le ping actuel, la perte de paquets et le temps de jeu. Couleurs : vert
+sous 50 ms, jaune sous 100 ms, orange sous 200 ms, rouge au-dessus ou pas de réponse.
 
-En peer-to-peer, la latence vient des messages keep-alive que le jeu échange avec l'adversaire.
+En client-server, le ping en direct vient de nos propres sondes vers le serveur (connexion TCP, ou ping pour les
+serveurs sur le port 5735), donc il peut être un peu différent de la mesure du jeu affichée au début. En peer-to-peer,
+il vient des messages keep-alive que le jeu échange avec l'adversaire.
 
-`fluctuation: x% loss` apparaît quand la perte varie de plus de 4 points. Le jeu envoie ses données par groupes de 256
-messages, donc la perte est comptée par groupe, dans le sens serveur/adversaire → toi.
+**`! packet loss x% (was y%)`** apparaît quand la perte varie de plus de 4 points. Le jeu envoie ses données par
+groupes de 256 messages, donc la perte est comptée par groupe, dans le sens serveur/adversaire → toi.
 
-Un match est considéré comme terminé après 8 s sans trafic (client-server) ou 3 s (peer-to-peer). Si un match
-client-server « se termine » juste après avoir commencé, le jeu est sans doute passé en TCP, que l'outil ne voit pas.
+**Fin de match** : après 8 s sans trafic (client-server) ou 3 s (peer-to-peer), un résumé d'une ligne s'affiche. Un
+match qui se termine en moins de 20 s a sûrement été refusé ou annulé. En client-server, ça peut aussi vouloir dire
+que le jeu est passé en TCP, que l'outil ne voit pas.
 
-Avant le matchmaking, le jeu ping plein de serveurs Konami. Quelques secondes après, un petit résumé s'affiche
-(`région [min/moy ms] réponses/envois`). `sp` donne le tableau complet.
+**Test de vitesse** : avant le matchmaking, le jeu ping plein de serveurs Konami. Quelques secondes après, un tableau
+montre le ping moyen vers chacun. `speed` donne le tableau complet.
+
+Les adresses IP sont masquées par défaut (pratique en stream). Utilise `--show-ip` pour les voir.
 
 ### matchlogs.csv
 
