@@ -216,11 +216,12 @@ il vient des messages keep-alive que le jeu échange avec l'adversaire.
 groupes de 256 messages, donc la perte est comptée par groupe, dans le sens serveur/adversaire → toi.
 
 **Fin de match** : après 8 s sans trafic (client-server) ou 3 s (peer-to-peer), un résumé d'une ligne s'affiche. Un
-match qui se termine en moins de 20 s a sûrement été refusé ou annulé. En client-server, ça peut aussi vouloir dire
+match qui se termine en moins de 60 s a sûrement été refusé ou annulé. En client-server, ça peut aussi vouloir dire
 que le jeu est passé en TCP, que l'outil ne voit pas.
 
 **Test de vitesse** : avant le matchmaking, le jeu ping plein de serveurs Konami. Quelques secondes après, un tableau
-montre le ping moyen vers chacun. `speed` donne le tableau complet.
+montre les 10 serveurs avec le meilleur ping moyen (au plus une fois toutes les 2 minutes). `speed` donne le tableau
+complet.
 
 Les adresses IP sont masquées par défaut (pratique en stream). Utilise `--show-ip` pour les voir.
 

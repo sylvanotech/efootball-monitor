@@ -210,11 +210,11 @@ keep-alive messages the game exchanges with the opponent.
 messages, so loss is counted per group, in the server/opponent → you direction.
 
 **End of match**: after 8 s without traffic (client-server) or 3 s (peer-to-peer) you get a one-line summary. A
-match that ends within 20 s was most likely declined or cancelled. In client-server it can also mean the game switched
+match that ends within 60 s was most likely declined or cancelled. In client-server it can also mean the game switched
 to TCP, which the tool can't see.
 
 **Speed test**: before matchmaking the game pings a bunch of Konami servers. A few seconds after that, a table shows
-the average ping to each one. `speed` gives the full table.
+the 10 servers with the best average ping (at most once every 2 minutes). `speed` gives the full table.
 
 IP addresses are hidden by default (handy when streaming). Use `--show-ip` to see them.
 

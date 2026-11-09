@@ -20,9 +20,29 @@ pub fn is_speed_port(p: u16) -> bool {
 const MAX_PENDING: usize = 2000;
 
 /// City and country for cloud servers (also for lists saved by older versions), else the saved name.
+/// Includes the provider, as several servers can share a city (`Cape Town (AWS)`).
 fn display_name(sv: &SpeedServer) -> String {
-    crate::cloud::location(&sv.ip).map_or_else(|| sv.region.replace('_', " "), str::to_string)
+    use crate::cloud::{lookup, region_location, Provider};
+    match lookup(&sv.ip) {
+        Some((p, region)) => {
+            let provider = match p {
+                Provider::GoogleCloud => "Google",
+                Provider::Aws => "AWS",
+            };
+            let place = match region {
+                "GLOBAL" => "Anycast",
+                r => region_location(r).unwrap_or(r),
+            };
+            format!("{place} ({provider})")
+        }
+        None => sv.region.replace('_', " "),
+    }
 }
+
+/// Servers listed in the automatic summary (all of them with `speed`).
+const BRIEF_ROWS: usize = 10;
+/// Minimum time between two automatic summaries.
+const BRIEF_COOLDOWN_S: i64 = 120;
 const PENDING_TTL_MS: i64 = 2000;
 
 #[derive(Clone, Debug, Default)]
@@ -135,11 +155,6 @@ impl SpeedServers {
                 }
                 self.servers
                     .push(SpeedServer::new(server_ip, &geo.city(server_ip), port));
-                out(format!(
-                    "  {DIM}speed test server found: {} ({} known){RESET}\n",
-                    geo.area(server_ip),
-                    self.servers.len()
-                ));
                 self.should_print = true;
                 self.servers.len() - 1
             }
@@ -213,11 +228,22 @@ impl SpeedServers {
     /// Short table printed automatically after a test burst.
     pub fn print_brief(&self, now: Micros) {
         let mut s = format!("\n{}\n", rule(&format!("Speed test - {}", fmt_hms(now))));
-        for sv in self.sorted().into_iter().filter(|s| s.responses > 0) {
+        let answered: Vec<&SpeedServer> = self
+            .sorted()
+            .into_iter()
+            .filter(|s| s.responses > 0)
+            .collect();
+        let width = answered
+            .iter()
+            .take(BRIEF_ROWS)
+            .map(|s| display_name(s).chars().count())
+            .max()
+            .unwrap_or(0);
+        for sv in answered.iter().take(BRIEF_ROWS) {
             let avg = sv.avg().round() as i64;
             let lost = sv.requests.saturating_sub(sv.responses);
             s.push_str(&format!(
-                "  {:<28} {}{:>4} ms{RESET}  {DIM}min {:>3}{RESET}  {}/{}",
+                "  {:<width$} {}{:>4} ms{RESET}  {DIM}min {:>3}{RESET}  {}/{}",
                 display_name(sv),
                 latency_color(avg),
                 avg,
@@ -233,7 +259,14 @@ impl SpeedServers {
             }
             s.push('\n');
         }
-        s.push_str(&format!("  {DIM}Type 'speed' for details.{RESET}\n"));
+        let more = answered.len().saturating_sub(BRIEF_ROWS);
+        if more > 0 {
+            s.push_str(&format!(
+                "  {DIM}... and {more} more servers. Type 'speed' for the full list.{RESET}\n"
+            ));
+        } else {
+            s.push_str(&format!("  {DIM}Type 'speed' for details.{RESET}\n"));
+        }
         out(s);
     }
 
@@ -350,6 +383,7 @@ impl SpeedServers {
             && !server_match_running
             && self.should_print
             && requests > 20
+            && (self.last_print == 0 || (now - self.last_print) / 1_000_000 >= BRIEF_COOLDOWN_S)
         {
             self.print_brief(now);
             if responses > 10 {

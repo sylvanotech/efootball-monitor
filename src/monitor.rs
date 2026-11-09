@@ -486,9 +486,12 @@ impl Monitor {
         i.start = self.now;
         i.active = true;
         if delay != 0 {
-            i.initial = delay;
+            // The game may do several handshakes: keep the first one as the initial latency.
+            if i.initial == 0 {
+                i.initial = delay;
+                i.initial_counted = false;
+            }
             i.current = delay;
-            i.initial_counted = false;
         }
     }
 
@@ -688,7 +691,7 @@ impl Monitor {
             max: i.max,
             max_loss: i.max_loss,
         });
-        if elapsed >= 20 {
+        if elapsed >= 60 {
             let ping = if i.samples > 0 {
                 format!("ping avg {} (min {}, max {})", fmt_ms(i.avg), i.min, i.max)
             } else {

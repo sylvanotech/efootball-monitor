@@ -58,6 +58,7 @@ pub fn region_location(region: &str) -> Option<&'static str> {
         "asia-south2" => "Delhi, India",
         "asia-southeast1" => "Singapore",
         "asia-southeast2" => "Jakarta, Indonesia",
+        "asia-southeast3" => "Bangkok, Thailand",
         "australia-southeast1" => "Sydney, Australia",
         "australia-southeast2" => "Melbourne, Australia",
         "europe-central2" => "Warsaw, Poland",
