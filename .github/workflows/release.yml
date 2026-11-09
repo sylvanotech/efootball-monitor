@@ -58,3 +58,4 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.archive }}
+          prerelease: ${{ contains(github.ref_name, '-') }}

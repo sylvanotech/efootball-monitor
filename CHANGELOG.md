@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.1.0 — unreleased
+## 0.1.0-beta.1 — 2026-11-09
 
-First public version.
+First public version (beta: not yet validated on a large number of real matches).
 
 * Detects client-server matches (Google Cloud and AWS relays) and peer-to-peer matches.
 * Server latency probe (TCP connect, ICMP for port 5735), packet loss per message group.
