@@ -9,6 +9,8 @@
 * From the first real capture: quieter speed test (no line per discovered server, 10 best servers in the automatic
   summary, at most every 2 minutes, provider shown to tell servers in the same city apart); the initial latency is
   the first handshake; matches under 60 s are reported as not played; `asia-southeast3` (Bangkok) added.
+* Speed test results (`speed`, `servers` and the automatic summary) shown as aligned tables with separate Server,
+  Provider, Avg, Min, Answered and Lost columns.
 * IP addresses hidden by default (`--show-ip` to show them).
 * Commands renamed: `speed`, `servers`, `help` (the old `sp` and `hh` still work).
 * `--ascii` for consoles without Unicode block characters.

@@ -155,6 +155,49 @@ pub fn rule(title: &str) -> String {
     format!("{DIM}{head}{}{RESET}", c.repeat(n))
 }
 
+/// A table cell: text and an optional color.
+pub type Cell = (String, &'static str);
+
+/// Aligned text table with a dim header and separator. `right[i]` right-aligns column i.
+pub fn table(header: &[&str], rows: &[Vec<Cell>], right: &[bool]) -> String {
+    let mut widths: Vec<usize> = header.iter().map(|h| h.chars().count()).collect();
+    for row in rows {
+        for (i, (text, _)) in row.iter().enumerate() {
+            widths[i] = widths[i].max(text.chars().count());
+        }
+    }
+    let pad = |i: usize, text: &str| {
+        let n = widths[i].saturating_sub(text.chars().count());
+        if right.get(i).copied().unwrap_or(false) {
+            format!("{}{text}", " ".repeat(n))
+        } else {
+            format!("{text}{}", " ".repeat(n))
+        }
+    };
+    let line = |cells: Vec<String>| format!("  {}\n", cells.join("  ").trim_end());
+    let mut s = String::new();
+    let head: Vec<String> = header.iter().enumerate().map(|(i, h)| pad(i, h)).collect();
+    s.push_str(&format!("{DIM}{}{RESET}", line(head)));
+    let c = if ascii() { "-" } else { "─" };
+    let sep: Vec<String> = widths.iter().map(|&w| c.repeat(w)).collect();
+    s.push_str(&format!("{DIM}{}{RESET}", line(sep)));
+    for row in rows {
+        let cells: Vec<String> = row
+            .iter()
+            .enumerate()
+            .map(|(i, (text, color))| {
+                if color.is_empty() {
+                    pad(i, text)
+                } else {
+                    format!("{color}{}{RESET}", pad(i, text))
+                }
+            })
+            .collect();
+        s.push_str(&line(cells));
+    }
+    s
+}
+
 /// Accept/decline hint from the latency at match start.
 pub fn verdict(ms: i64, max_ping: i64) -> String {
     if ms <= 0 {
@@ -207,5 +250,19 @@ mod tests {
         assert!(verdict(180, 120).contains("FAR"));
         assert_eq!(fmt_duration(568), "9 min 28 s");
         assert_eq!(fmt_duration(45), "45 s");
+    }
+
+    #[test]
+    fn table_alignment() {
+        set_ascii(true);
+        let rows = vec![
+            vec![("Tokyo".to_string(), ""), ("35 ms".to_string(), "")],
+            vec![("Johannesburg".to_string(), ""), ("240 ms".to_string(), "")],
+        ];
+        let t = table(&["Server", "Avg"], &rows, &[false, true]);
+        set_ascii(false);
+        let lines: Vec<&str> = t.lines().collect();
+        assert!(lines[2].ends_with("Tokyo          35 ms"), "{t}");
+        assert!(lines[3].ends_with("Johannesburg  240 ms"), "{t}");
     }
 }

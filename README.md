@@ -45,6 +45,9 @@ Server: Tokyo, Japan
 182 ms    0.0% loss
 ```
 
+**The overlay needs eFootball in borderless windowed mode** (or windowed). In fullscreen, Windows draws the game
+over every other window, so the overlay stays hidden behind it. The beep works in every mode.
+
 The tool never accepts or declines anything itself, you decide in the game.
 
 ## What it does

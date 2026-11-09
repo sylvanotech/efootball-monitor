@@ -46,6 +46,10 @@ Server: Tokyo, Japan
 182 ms    0.0% loss
 ```
 
+**L'overlay demande de mettre eFootball en mode fenêtré sans bordure** (ou fenêtré). En plein écran, Windows
+affiche le jeu par-dessus toutes les autres fenêtres, donc l'overlay reste caché derrière. Le bip marche dans tous
+les modes.
+
 L'outil n'accepte et ne refuse rien à ta place, c'est toi qui décides dans le jeu.
 
 ## Ce que ça fait
