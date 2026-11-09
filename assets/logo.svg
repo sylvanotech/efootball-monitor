@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>efootball-monitor</title>
+  <defs>
+    <clipPath id="r"><rect width="256" height="256" rx="56"/></clipPath>
+  </defs>
+  <g clip-path="url(#r)">
+    <rect width="256" height="256" fill="#14532d"/>
+    <rect width="128" height="256" fill="#166534"/>
+    <g fill="none" stroke="#22c55e" stroke-opacity=".35" stroke-width="6">
+      <line x1="128" y1="0" x2="128" y2="256"/>
+      <circle cx="128" cy="128" r="58"/>
+    </g>
+  </g>
+  <g fill="#f8fafc">
+    <rect x="44"  y="160" width="30" height="48"  rx="7"/>
+    <rect x="86"  y="128" width="30" height="80"  rx="7"/>
+    <rect x="128" y="96"  width="30" height="112" rx="7"/>
+    <rect x="170" y="64"  width="30" height="144" rx="7" opacity=".55"/>
+  </g>
+  <circle cx="196" cy="62" r="40" fill="#dc2626" stroke="#14532d" stroke-width="8"/>
+  <g stroke="#fff" stroke-width="12" stroke-linecap="round">
+    <line x1="180" y1="46" x2="212" y2="78"/>
+    <line x1="212" y1="46" x2="180" y2="78"/>
+  </g>
+</svg>

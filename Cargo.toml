@@ -1,0 +1,25 @@
+[package]
+name = "efootball-monitor"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.84"
+resolver = "3"
+description = "Network monitor for eFootball: detects the match mode (client-server or peer-to-peer), the server/opponent, latency, packet loss and in-game speed test results"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["efootball", "network", "latency", "pcap", "monitor"]
+categories = ["command-line-utilities", "network-programming"]
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4", features = ["derive"] }
+pcap = "2"
+socket2 = { version = "0.5", features = ["all"] }
+
+[target.'cfg(windows)'.dependencies]
+enable-ansi-support = "0.2"
+
+[profile.release]
+lto = true
+strip = true

@@ -1,0 +1,824 @@
+//! Match detection and statistics. See `docs/PROTOCOL.md` for the wire format.
+//!
+//! Classification is done on the first two UDP payload bytes (big endian),
+//! ignoring datagrams sent from the STUN ports 3478/5478:
+//!
+//! | type             | kind | meaning                                                         |
+//! |------------------|------|-----------------------------------------------------------------|
+//! | 0xe660 (local→)  | CS   | relay pairing: remember the time                                |
+//! | 0xf088 (→local)  | CS   | first server reply ⇒ client-server match, latency = now − e660  |
+//! | 0xf188 (→local)  | CS   | relayed game data, byte 9 = group id (256 messages per group)   |
+//! | 0x080b / 0x090b  | P2P  | match request / response ⇒ peer-to-peer match                   |
+//! | 0x080c / 0x090c  | P2P  | keep-alive; bytes 8..20 = transaction id ⇒ round-trip time       |
+//! | 0x0000 (→local)  | P2P  | game data, byte 2 = group id; 100 messages ⇒ session started    |
+//! | UDP len 10 on 5521/10000/30000/50000 | in-game speed test (see `speed.rs`)        |
+
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::PathBuf;
+
+use crate::geo::GeoDb;
+use crate::packet::UdpPacket;
+use crate::speed::{is_speed_port, SpeedServers};
+use crate::util::{brief, color_dot, fmt_full, fmt_full_utc, fmt_hms, out, Micros, RESET, YELLOW};
+
+pub const PORT_ICMP_ONLY: u16 = 5735; // 0x1667: probe with ICMP instead of TCP
+const STUN_PORTS: [u16; 2] = [3478, 5478];
+
+pub struct Config {
+    pub overlay_file: Option<PathBuf>,
+    /// `None` = do not write a match log (replays).
+    pub match_log: Option<PathBuf>,
+}
+
+/// One finished match, in a stable text form used by replays and regression tests.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MatchSummary {
+    pub p2p: bool,
+    pub ip: String,
+    pub port: u16,
+    pub duration_s: i64,
+    pub initial: i64,
+    pub samples: i64,
+    pub min: i64,
+    pub avg: i64,
+    pub max: i64,
+    pub max_loss: f32,
+}
+
+impl std::fmt::Display for MatchSummary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mode = if self.p2p {
+            "peer-peer"
+        } else {
+            "client-server"
+        };
+        write!(f, "match {mode} remote={}:{}", self.ip, self.port)?;
+        if !self.p2p {
+            write!(f, " provider=\"{}\"", crate::cloud::describe(&self.ip))?;
+        }
+        write!(
+            f,
+            " duration={}s initial={}ms samples={} min={}ms avg={}ms max={}ms max_loss={:.1}%",
+            self.duration_s,
+            self.initial,
+            self.samples,
+            self.min,
+            self.avg,
+            self.max,
+            self.max_loss
+        )
+    }
+}
+
+/// Current match.
+#[derive(Default, Clone)]
+pub struct MatchInfo {
+    pub ip: String,
+    pub port: u16,
+    pub local_ip: String,
+    pub local_port: u16,
+    pub area: String,
+    pub p2p: bool,
+    pub active: bool,
+    pub start: Micros,
+    pub print_count: u32,
+    pub initial: i64,
+    pub current: i64,
+    pub min: i64,
+    pub max: i64,
+    pub sum: i64,
+    pub samples: i64,
+    pub avg: i64,
+    pub max_loss: f32,
+    pub loss: f32,
+    /// The initial latency has been added to the statistics.
+    pub initial_counted: bool,
+}
+
+#[derive(Default)]
+struct P2pStats {
+    req_ts: Micros,
+    req_tid: [u8; 12],
+    session_started: bool,
+    major_ip: String,
+    group: Option<u8>,
+    group_count: i32,
+    zero_v4: u32,
+    zero_v6: u32,
+    stun_ticks: u32,
+}
+
+#[derive(Default)]
+struct PspStats {
+    active: bool,
+    e660_ts: Micros,
+    group: u8,
+    group_count: i32,
+}
+
+pub struct Monitor {
+    pub cfg: Config,
+    pub local_ips: Vec<String>,
+    pub geo: GeoDb,
+    pub speed: SpeedServers,
+    pub info: MatchInfo,
+    p2p: P2pStats,
+    psp: PspStats,
+    p2p_loss_prev: f32,
+    psp_loss_prev: f32,
+    last_p2p: Micros,
+    last_psp: Micros,
+    match_count: u32,
+    column: usize,
+    probe_ticks: u32,
+    /// Current time: the last packet timestamp or tick, whichever is later.
+    now: Micros,
+    /// Matches finished so far.
+    pub finished: Vec<MatchSummary>,
+}
+
+impl Monitor {
+    pub fn new(cfg: Config, local_ips: Vec<String>, geo: GeoDb, speed: SpeedServers) -> Self {
+        Self {
+            cfg,
+            local_ips,
+            geo,
+            speed,
+            info: MatchInfo::default(),
+            p2p: P2pStats::default(),
+            psp: PspStats::default(),
+            p2p_loss_prev: 0.0,
+            psp_loss_prev: 0.0,
+            last_p2p: 0,
+            last_psp: 0,
+            match_count: 1,
+            column: 0,
+            probe_ticks: 0,
+            now: 0,
+            finished: Vec::new(),
+        }
+    }
+
+    /// RFC 1918 addresses are always local (covers a
+    /// port-mirrored console); otherwise compare with the host's addresses,
+    /// ignoring the last 3 characters of the candidate.
+    pub fn is_local(&self, ip: &str) -> bool {
+        if ip.len() <= 4 {
+            return false;
+        }
+        if let Ok(std::net::IpAddr::V4(a)) = ip.parse() {
+            if a.is_private() {
+                return true;
+            }
+        }
+        let n = ip.len() - 3;
+        self.local_ips
+            .iter()
+            .any(|l| l.as_bytes().get(..n) == Some(&ip.as_bytes()[..n]))
+    }
+
+    // ---- overlay
+
+    fn write_overlay(&self, content: &str) {
+        if let Some(p) = &self.cfg.overlay_file {
+            let _ = std::fs::write(p, content);
+        }
+    }
+
+    pub fn update_overlay(&self) {
+        if self.cfg.overlay_file.is_none() {
+            return;
+        }
+        let i = &self.info;
+        let elapsed = (self.now - i.start) / 1_000_000;
+        let mode = if i.p2p { "peer-peer" } else { "client-server" };
+        if elapsed < 91 {
+            self.write_overlay(&format!(
+                "{} {}:{} {}ms {:.1}%loss\n{}",
+                mode, i.ip, i.port, i.current, i.loss, i.area
+            ));
+        } else {
+            self.write_overlay(&format!(
+                "{}  {}ms {:.1}% ",
+                self.geo.city(&i.ip),
+                i.current,
+                i.loss
+            ));
+        }
+    }
+
+    // ---- dispatch
+
+    pub fn on_packet(&mut self, p: &UdpPacket, ts: Micros) {
+        self.now = self.now.max(ts);
+        let src = p.src.to_string();
+        let dst = p.dst.to_string();
+        if p.udp_len == 10 && (is_speed_port(p.sport) || is_speed_port(p.dport)) {
+            self.speed_handler(&src, p.sport, &dst, p.dport, p.payload, ts);
+            return;
+        }
+        if STUN_PORTS.contains(&p.sport) || p.payload.len() < 2 {
+            return;
+        }
+        let msg = u16::from_be_bytes([p.payload[0], p.payload[1]]);
+        if is_psp_msg(msg) {
+            self.last_psp = ts;
+            self.psp_handler(&src, p.sport, &dst, p.dport, p.payload, ts);
+        } else if is_p2p_msg(msg) {
+            self.last_p2p = ts;
+            self.p2p_handler(&src, p.sport, &dst, p.dport, p.payload, ts);
+        }
+    }
+
+    fn speed_handler(
+        &mut self,
+        src: &str,
+        sport: u16,
+        dst: &str,
+        dport: u16,
+        d: &[u8],
+        ts: Micros,
+    ) {
+        if d.len() != 2 {
+            return;
+        }
+        let id = u16::from_be_bytes([d[0], d[1]]);
+        if is_speed_port(dport) {
+            self.speed.on_request(dst, dport, id, ts, &self.geo);
+        } else if is_speed_port(sport) {
+            self.speed.on_response(src, id, ts);
+        }
+    }
+
+    // ---- client-server matches
+
+    fn psp_handler(&mut self, src: &str, sport: u16, dst: &str, dport: u16, d: &[u8], ts: Micros) {
+        let src_local = self.is_local(src);
+        match u16::from_be_bytes([d[0], d[1]]) {
+            0xe660 if src_local => {
+                if !self.psp.active {
+                    self.psp.e660_ts = ts;
+                }
+            }
+            0xf088 if !src_local => {
+                if !self.psp.active && self.psp.e660_ts != 0 {
+                    let delay = (ts - self.psp.e660_ts) / 1000;
+                    self.match_start(src, sport, dst, dport, false, delay);
+                    self.update_overlay();
+                    self.print_new_match();
+                }
+            }
+            0xf188 if !src_local => {
+                let Some(&g) = d.get(9) else { return };
+                if !self.psp.active {
+                    self.psp.active = true;
+                    self.psp.group = g;
+                    self.psp.group_count = 0;
+                    self.match_start(src, sport, dst, dport, false, 0);
+                    self.print_new_match();
+                }
+                if g == self.psp.group {
+                    self.psp.group_count += 1;
+                } else {
+                    let prev = self.psp.group_count;
+                    let rate = (256 - prev) as f32 / 256.0 * 100.0;
+                    if prev > 10 {
+                        self.info.loss = rate;
+                        self.update_match_info(0, rate);
+                        if (self.psp_loss_prev - rate).abs() > 4.0 && self.info.active {
+                            out(format!(
+                                "\n{} fluctuation: {:.1}% loss    ",
+                                fmt_hms(ts),
+                                rate
+                            ));
+                            self.psp_loss_prev = rate;
+                        }
+                    }
+                    self.psp.group = g;
+                    self.psp.group_count = 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // ---- peer-to-peer matches
+
+    fn p2p_handler(&mut self, src: &str, sport: u16, dst: &str, dport: u16, d: &[u8], ts: Micros) {
+        match u16::from_be_bytes([d[0], d[1]]) {
+            0x0000 => {
+                if !self.is_local(src) {
+                    self.handle_game_data(src, sport, dst, dport, d, ts);
+                }
+            }
+            0x080b | 0x090b => {
+                let major = &self.p2p.major_ip;
+                if major.is_empty() || src == major || dst == major {
+                    self.handle_stun(src, sport, dst, dport, d, ts);
+                }
+            }
+            0x080c | 0x090c => self.handle_stun(src, sport, dst, dport, d, ts),
+            _ => {}
+        }
+    }
+
+    fn handle_stun(&mut self, src: &str, sport: u16, dst: &str, dport: u16, d: &[u8], ts: Micros) {
+        let src_local = self.is_local(src);
+        if src_local && self.is_local(dst) {
+            return;
+        }
+        match u16::from_be_bytes([d[0], d[1]]) {
+            0x090b if !src_local => self.match_start(src, sport, dst, dport, true, 0),
+            0x080b if src_local => self.match_start(dst, dport, src, sport, true, 0),
+            0x080c if src_local => {
+                if let Some(t) = d.get(8..20) {
+                    self.p2p.req_ts = ts;
+                    self.p2p.req_tid.copy_from_slice(t);
+                }
+            }
+            0x090c if !src_local => {
+                if d.get(8..20) != Some(&self.p2p.req_tid[..]) || self.p2p.req_ts == 0 {
+                    return;
+                }
+                let delay = (ts - self.p2p.req_ts) / 1000;
+                if !self.p2p.session_started {
+                    self.p2p.stun_ticks = 0;
+                    self.match_start(src, sport, dst, dport, true, delay);
+                    self.update_overlay();
+                    self.print_new_match();
+                } else {
+                    self.update_match_info(delay, 0.0);
+                    self.print_sample(delay, self.p2p.stun_ticks);
+                    self.p2p.stun_ticks += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_game_data(
+        &mut self,
+        src: &str,
+        sport: u16,
+        dst: &str,
+        dport: u16,
+        d: &[u8],
+        _ts: Micros,
+    ) {
+        let Some(&g) = d.get(2) else { return };
+        if self.p2p.group != Some(g) {
+            if self.p2p.group.is_some() {
+                let received = self.p2p.group_count;
+                let rate = (256 - received) as f32 * 100.0 / 256.0;
+                if received > 10 {
+                    self.info.loss = rate;
+                    self.update_match_info(0, rate);
+                    if (rate - self.p2p_loss_prev).abs() > 4.0 && self.info.active {
+                        out(format!(
+                            "\n{} fluctuation: {:.1}% loss    ",
+                            fmt_hms(self.now),
+                            rate
+                        ));
+                        self.p2p_loss_prev = rate;
+                    }
+                }
+            }
+            self.p2p.group = Some(g);
+            self.p2p.group_count = 0;
+        }
+        self.p2p.group_count += 1;
+        let zeros = if src.contains(':') {
+            self.p2p.zero_v6 += 1;
+            self.p2p.zero_v6
+        } else {
+            self.p2p.zero_v4 += 1;
+            self.p2p.zero_v4
+        };
+        if zeros < 100 {
+            return;
+        }
+        if self.p2p.major_ip.is_empty() {
+            if self.info.ip != src && self.info.print_count > 0 {
+                out(format!("{YELLOW}\nactual ip changes to:{src} {RESET}"));
+            }
+            self.info.ip = src.into();
+            self.info.area = self.geo.area(src);
+            self.p2p.major_ip = src.into();
+        }
+        if !self.p2p.session_started {
+            self.p2p.session_started = true;
+            self.match_start(src, sport, dst, dport, true, 0);
+            self.print_new_match();
+        }
+    }
+
+    // ---- match bookkeeping
+
+    fn match_start(
+        &mut self,
+        ip: &str,
+        port: u16,
+        local: &str,
+        local_port: u16,
+        p2p: bool,
+        delay: i64,
+    ) {
+        let i = &mut self.info;
+        if !i.ip.is_empty() && i.ip != ip && i.print_count > 0 {
+            out(format!(
+                "{YELLOW}trying to switch IP {}:{} ({}){RESET}\n",
+                ip,
+                port,
+                self.geo.area(ip)
+            ));
+        }
+        i.ip = ip.into();
+        i.area = self.geo.area(ip);
+        i.local_ip = local.into();
+        i.port = port;
+        i.local_port = local_port;
+        i.p2p = p2p;
+        i.start = self.now;
+        i.active = true;
+        if delay != 0 {
+            i.initial = delay;
+            i.current = delay;
+            i.initial_counted = false;
+        }
+    }
+
+    pub fn update_match_info(&mut self, latency: i64, loss: f32) {
+        let i = &mut self.info;
+        if latency > 0 {
+            i.current = latency;
+            i.sum += latency;
+            i.samples += 1;
+            i.avg = i.sum / i.samples;
+            if i.initial == 0 {
+                i.initial = latency;
+            }
+        }
+        i.max = i.max.max(latency);
+        if i.min == 0 || (latency > 0 && latency < i.min) {
+            i.min = latency;
+        }
+        if loss > i.max_loss {
+            i.max_loss = loss;
+        }
+    }
+
+    fn print_new_match(&mut self) {
+        self.column = 0;
+        let i = &self.info;
+        if i.print_count == 0 {
+            if self.match_count == 1 {
+                out(brief());
+            }
+            let n = self.match_count;
+            self.match_count += 1;
+            let mut s = format!("\n\n{} {:3}\t", fmt_hms(self.now), n);
+            if i.p2p {
+                s.push_str("\x1b[40;32;1mpeer-peer\x1b[0m");
+            } else {
+                let cloud = crate::cloud::describe(&i.ip);
+                s.push_str(&format!("{YELLOW}client-server{RESET} ({cloud})"));
+            }
+            s.push_str(" match from ");
+            s.push_str(&format!("{YELLOW} {}{RESET}\n", i.area));
+            if i.ip.contains(':') {
+                s.push_str(&format!(
+                    "\t\tRemote [{}]:{}  local [{}]:{}\n",
+                    i.ip, i.port, i.local_ip, i.local_port
+                ));
+            } else {
+                s.push_str(&format!(
+                    "\t\tlocal {}:{}  Remote {}:{}\n",
+                    i.local_ip, i.local_port, i.ip, i.port
+                ));
+            }
+            if i.initial > 0 {
+                s.push_str(&format!("\x1b[40;36;1m{:4}ms{RESET}", i.initial));
+            }
+            s.push('\x07');
+            out(s);
+        } else if i.initial > 0 {
+            out(format!("\x1b[40;36;1m{:4}ms{RESET}", i.initial));
+        }
+        self.info.print_count += 1;
+        if self.info.initial > 0 && !self.info.initial_counted {
+            self.info.initial_counted = true;
+            let initial = self.info.initial;
+            self.update_match_info(initial, 0.0);
+        }
+    }
+
+    /// First 5 samples as yellow numbers, then dot + overwritten number.
+    fn print_sample(&mut self, ms: i64, tick: u32) {
+        if tick < 5 {
+            out(format!("{YELLOW} {ms}{RESET}"));
+            return;
+        }
+        let mut s = String::new();
+        if self.column + 5 >= 75 {
+            s.push('\n');
+            self.column = 0;
+        } else if self.column > 0 {
+            s.push_str("\x08\x08\x08\x08");
+        }
+        s.push_str(color_dot(ms));
+        s.push_str(&format!("{ms:4}"));
+        self.column += 5;
+        out(s);
+    }
+
+    fn match_end(&mut self) {
+        let i = &self.info;
+        let elapsed = (self.now - i.start) / 1_000_000;
+        self.finished.push(MatchSummary {
+            p2p: i.p2p,
+            ip: i.ip.clone(),
+            port: i.port,
+            duration_s: elapsed,
+            initial: i.initial,
+            samples: i.samples,
+            min: i.min,
+            avg: i.avg,
+            max: i.max,
+            max_loss: i.max_loss,
+        });
+        if elapsed > 90 {
+            out(format!(
+                "summary:  elapse {:02}:{:02} latency: initial/avg/min/max {}/{}/{}/{}   Max loss rate: {:.1}%\n",
+                elapsed / 60, elapsed % 60, i.initial, i.avg, i.min, i.max, i.max_loss
+            ));
+            self.log_match(elapsed);
+        }
+        self.info = MatchInfo {
+            print_count: 0,
+            ..Default::default()
+        };
+        self.p2p = P2pStats::default();
+        self.psp = PspStats::default();
+        self.write_overlay("exit");
+    }
+
+    fn log_match(&self, elapsed: i64) {
+        let Some(path) = &self.cfg.match_log else {
+            return;
+        };
+        let mut text = String::new();
+        if !path.exists() {
+            text.push_str("MatchTime,IP,Port,Region,MatchMode,Provider,MatchDuration,InitialDelay(ms),MinDelay(ms),AvgDelay(ms),MaxDelay(ms),MaxLossRate\n");
+        }
+        text.push_str(&self.csv_row(elapsed));
+        text.push('\n');
+        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
+            let _ = f.write_all(text.as_bytes());
+        }
+    }
+
+    pub fn csv_row(&self, elapsed: i64) -> String {
+        let i = &self.info;
+        format!(
+            "{},{},{},{},{},{},{:02}:{:02}:{:02},{},{},{},{},{:.1}%",
+            fmt_full(i.start),
+            i.ip,
+            i.port,
+            i.area,
+            if i.p2p { "peer-peer" } else { "client-server" },
+            if i.p2p {
+                "-".to_string()
+            } else {
+                crate::cloud::describe(&i.ip)
+            },
+            elapsed / 3600,
+            elapsed / 60 % 60,
+            elapsed % 60,
+            i.initial,
+            i.min,
+            i.avg,
+            i.max,
+            i.max_loss
+        )
+    }
+
+    // ---- 1 Hz worker, split around the blocking probe
+
+    /// Server to probe this tick (client-server matches only).
+    pub fn probe_target(&mut self) -> Option<(String, u16)> {
+        if !self.info.active {
+            self.probe_ticks = 0;
+            return None;
+        }
+        (!self.info.p2p).then(|| (self.info.ip.clone(), self.info.port))
+    }
+
+    pub fn after_probe(&mut self, ms: i64) {
+        let t = self.probe_ticks;
+        self.print_sample(ms, t);
+        self.probe_ticks += 1;
+        if ms < 1000 {
+            self.update_match_info(ms, 0.0);
+        }
+    }
+
+    /// Ends a match still open (end of a replay).
+    pub fn finish(&mut self) {
+        if self.info.active {
+            self.match_end();
+        }
+    }
+
+    pub fn tick(&mut self, now: Micros) {
+        self.now = self.now.max(now);
+        let now = self.now;
+        if self.info.active && self.probe_ticks % 2 == 0 {
+            self.update_overlay();
+        }
+        let psp_running = self.psp.active;
+        self.speed.tick(now, psp_running);
+        if self.psp.active && (now - self.last_psp) / 1_000_000 > 8 {
+            out(format!(
+                "\nUTC {} Client-server match ended, cancelled or switched to TCP\n",
+                fmt_full_utc(now)
+            ));
+            self.match_end();
+        }
+        if self.p2p.session_started && (now - self.last_p2p) / 1_000_000 > 3 {
+            out(format!(
+                "\nUTC {} Match ended or cancelled\n",
+                fmt_full_utc(now)
+            ));
+            self.match_end();
+        }
+    }
+}
+
+pub fn is_psp_msg(m: u16) -> bool {
+    m & 0xfeff == 0xf088 || m == 0xe660
+}
+
+pub fn is_p2p_msg(m: u16) -> bool {
+    m == 0 || m & 0xfeff == 0x080b || m & 0xfeff == 0x080c
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::packet::{eth_ipv4_udp, parse, DLT_EN10MB};
+
+    fn mon(tag: &str) -> Monitor {
+        let dir = std::env::temp_dir().join(format!("efm-test-{}-{tag}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("matchlogs.csv");
+        let _ = std::fs::remove_file(&log);
+        Monitor::new(
+            Config {
+                overlay_file: None,
+                match_log: Some(log),
+            },
+            vec!["192.168.1.10".into()],
+            GeoDb::default(),
+            SpeedServers::load(dir.join("speedtest.txt")),
+        )
+    }
+
+    fn feed(
+        m: &mut Monitor,
+        src: [u8; 4],
+        dst: [u8; 4],
+        sp: u16,
+        dp: u16,
+        payload: &[u8],
+        ts: Micros,
+    ) {
+        let f = eth_ipv4_udp(src, dst, sp, dp, payload);
+        m.on_packet(&parse(DLT_EN10MB, &f).unwrap(), ts);
+    }
+
+    fn msg(t: u16, len: usize) -> Vec<u8> {
+        let mut v = vec![0u8; len];
+        v[..2].copy_from_slice(&t.to_be_bytes());
+        v
+    }
+
+    const ME: [u8; 4] = [192, 168, 1, 10];
+    const PEER: [u8; 4] = [81, 2, 3, 4];
+    const GCP: [u8; 4] = [34, 84, 43, 65];
+    const AWS: [u8; 4] = [15, 188, 178, 40];
+
+    #[test]
+    fn message_classes() {
+        assert!(is_psp_msg(0xf088) && is_psp_msg(0xf188) && is_psp_msg(0xe660));
+        assert!(is_p2p_msg(0) && is_p2p_msg(0x080b) && is_p2p_msg(0x090b) && is_p2p_msg(0x090c));
+        assert!(!is_p2p_msg(0xf188) && !is_psp_msg(0x080b));
+    }
+
+    #[test]
+    fn local_rules() {
+        let m = mon("local");
+        assert!(m.is_local("192.168.1.10"));
+        assert!(m.is_local("10.0.0.5"));
+        assert!(m.is_local("172.20.1.1"));
+        assert!(!m.is_local("81.2.3.4"));
+    }
+
+    #[test]
+    fn client_server_latency_and_loss() {
+        let mut m = mon("psp");
+        feed(&mut m, ME, AWS, 5000, 30123, &msg(0xe660, 20), 1_000_000);
+        feed(&mut m, AWS, ME, 30123, 5000, &msg(0xf088, 20), 1_048_000);
+        assert!(m.info.active && !m.info.p2p);
+        assert_eq!(m.info.ip, "15.188.178.40");
+        assert_eq!(m.info.initial, 48);
+        assert_eq!(
+            crate::cloud::lookup(&m.info.ip).map(|x| x.0),
+            Some(crate::cloud::Provider::Aws)
+        );
+        let mut ts = 2_000_000;
+        for g in 1u8..=4 {
+            for _ in 0..200 {
+                ts += 1000;
+                let mut d = msg(0xf188, 20);
+                d[9] = g;
+                feed(&mut m, AWS, ME, 30123, 5000, &d, ts);
+            }
+        }
+        assert!(
+            (m.info.max_loss - 21.875).abs() < 0.01,
+            "{}",
+            m.info.max_loss
+        );
+        // > 8 s of silence ends the match
+        m.info.start = ts + 9_000_000 - 120_000_000;
+        m.tick(ts + 9_000_000);
+        assert!(!m.info.active);
+        assert_eq!(
+            m.finished[0].to_string(),
+            "match client-server remote=15.188.178.40:30123 provider=\"AWS eu-west-3\" \
+             duration=120s initial=48ms samples=1 min=48ms avg=48ms max=48ms max_loss=21.9%"
+        );
+        let csv = std::fs::read_to_string(m.cfg.match_log.as_ref().unwrap()).unwrap();
+        assert!(
+            csv.lines().nth(1).unwrap().contains(
+                ",15.188.178.40,30123,AWS eu-west-3,client-server,AWS eu-west-3,00:02:00,48,"
+            ),
+            "{csv}"
+        );
+    }
+
+    #[test]
+    fn p2p_rtt_by_transaction_id() {
+        let mut m = mon("p2p");
+        feed(&mut m, ME, PEER, 5000, 6000, &msg(0x080b, 20), 1_000_000);
+        assert!(m.info.active && m.info.p2p);
+        let mut req = msg(0x080c, 20);
+        req[8..20].copy_from_slice(b"ABCDEFGHIJKL");
+        let mut rsp = msg(0x090c, 20);
+        rsp[8..20].copy_from_slice(b"ABCDEFGHIJKL");
+        feed(&mut m, ME, PEER, 5000, 6000, &req, 2_000_000);
+        feed(&mut m, PEER, ME, 6000, 5000, &rsp, 2_035_000);
+        assert_eq!(m.info.initial, 35);
+        rsp[19] = b'X'; // wrong tid ignored
+        feed(&mut m, PEER, ME, 6000, 5000, &rsp, 2_090_000);
+        assert_eq!(m.info.current, 35);
+    }
+
+    #[test]
+    fn p2p_session_from_game_data() {
+        let mut m = mon("game");
+        let mut ts = 1_000_000;
+        for g in 0u8..3 {
+            for k in 0..200 {
+                ts += 1000;
+                if k % 5 == 0 {
+                    continue; // 20% loss
+                }
+                let mut d = msg(0, 20);
+                d[2] = g;
+                feed(&mut m, PEER, ME, 6000, 5000, &d, ts);
+            }
+        }
+        assert!(m.p2p.session_started);
+        assert_eq!(m.p2p.major_ip, "81.2.3.4");
+        assert!(m.info.max_loss > 30.0, "{}", m.info.max_loss);
+        m.tick(ts + 4_000_000);
+        assert!(!m.info.active);
+    }
+
+    #[test]
+    fn speed_test_packets() {
+        let mut m = mon("speed");
+        feed(&mut m, ME, GCP, 5000, 5521, &[0x12, 0x34], 1_000_000);
+        feed(&mut m, GCP, ME, 5521, 5000, &[0x12, 0x34], 1_025_000);
+        let s = m
+            .speed
+            .servers
+            .iter()
+            .find(|s| s.ip == "34.84.43.65")
+            .unwrap();
+        assert_eq!((s.requests, s.responses, s.min), (1, 1, 25));
+        assert!(!m.info.active);
+    }
+}
