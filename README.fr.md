@@ -6,6 +6,8 @@
 
 **Never trust the bars.**
 
+Marche sous **Windows, macOS et Linux**. Gratuit et open source.
+
 *[English version](README.md)*
 
 Le jeu affiche 5 barres, et pourtant tes passes partent avec une demi-seconde de retard. Cet outil regarde le trafic
@@ -64,8 +66,23 @@ L'outil n'accepte et ne refuse rien à ta place, c'est toi qui décides dans le 
 - Peut enregistrer une session en `.pcap`, la rejouer, et l'anonymiser avant de la partager.
 
 L'outil lit seulement une copie du trafic, comme Wireshark. Il ne bloque, ne retarde et ne modifie aucun paquet, et ne
-touche ni aux fichiers ni à la mémoire du jeu. Marche sous Windows, Linux et macOS, et avec PlayStation/Xbox si ton
-routeur ou switch sait faire du port mirroring.
+touche ni aux fichiers ni à la mémoire du jeu.
+
+## Windows, macOS, Linux
+
+Pas seulement Windows : le même outil tourne nativement sur les trois, avec les mêmes fonctions. Utilise la machine
+que tu as.
+
+| | Windows | macOS | Linux |
+|---|---|---|---|
+| Jouer sur PC | ✓ | (eFootball n'existe que sous Windows) | ✓ avec Proton / Steam Deck |
+| Jouer sur PlayStation / Xbox | ✓ | ✓ | ✓ |
+| Fenêtre overlay (`--overlay`) | ✓ | | |
+
+Joueurs console : lance-le sur n'importe quel ordinateur branché à un routeur ou un switch qui sait recopier le port
+de la console (voir [Prérequis](#prérequis)).
+
+Les versions macOS et Linux sont récentes : si tu les essaies, tes retours sont les bienvenus dans les issues.
 
 ## Exemple
 
