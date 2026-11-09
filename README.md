@@ -39,7 +39,7 @@ With `--overlay` (Windows), a small window stays on top of the game with just wh
 
 ```text
 CLIENT-SERVER  ·  Google Cloud asia-northeast1
-Tokyo, Japan
+Server: Tokyo, Japan
 182 ms    0.0% loss
 ```
 
@@ -69,12 +69,14 @@ switch can mirror the console's port.
 
 ```text
 ── Match 3 - 21:04:12 ──────────────────────────────────────
-  Client-server - Tokyo, Japan (Google Cloud asia-northeast1)
-  Ping 182 ms   FAR - consider declining
+  Client-server (you and your opponent both play through this server)
+  Server:   Tokyo, Japan (Google Cloud asia-northeast1)
+  Ping:     182 ms   FAR - consider declining
 
 ── Match 4 - 21:05:40 ──────────────────────────────────────
-  Client-server - Paris, France (AWS eu-west-3)
-  Ping 38 ms   GOOD
+  Client-server (you and your opponent both play through this server)
+  Server:   Paris, France (AWS eu-west-3)
+  Ping:     38 ms   GOOD
   21:05  ping avg 41 ms (38-52), loss 0.0%
   21:06  ping avg 44 ms (38-97), loss 0.0%
   ! 21:07:12 ping spike 212 ms
@@ -162,8 +164,14 @@ Options:
 
 ## Reading the output
 
-**When a match is found** you get a block with the match number and time, the mode (client-server or
-peer-to-peer), where it goes, and the ping measured by the game itself at the start of the match, with a hint:
+**When a match is found** you get a block with the match number and time, the mode, a location, and the ping
+measured by the game itself at the start of the match. Watch which location it is:
+
+- **Client-server** shows `Server:`, the Konami server you and your opponent both connect to. Your opponent's own
+  location can't be seen in this mode.
+- **Peer-to-peer** shows `Opponent:`, where your opponent is (needs the IP2Location files, otherwise `unknown`).
+
+The ping comes with a hint:
 
 - `GOOD`: under 60 ms
 - `OK`: between 60 ms and the `--max-ping` limit (120 ms by default)

@@ -559,25 +559,37 @@ impl Monitor {
         let i = &self.info;
         let n = self.match_count;
         self.match_count += 1;
-        let mode = if i.p2p {
-            "Peer-to-peer"
+        // Say clearly whose location this is: in client-server the opponent is hidden behind the server.
+        let (mode, whose) = if i.p2p {
+            (
+                format!("Peer-to-peer {DIM}(direct link to your opponent){RESET}"),
+                "Opponent:",
+            )
         } else {
-            "Client-server"
+            (
+                format!("Client-server {DIM}(you and your opponent both play through this server){RESET}"),
+                "Server:  ",
+            )
         };
         let ping = if i.initial > 0 {
             format!(
-                "Ping {}   {}",
+                "{}   {}",
                 fmt_ms(i.initial),
                 verdict(i.initial, self.cfg.max_ping)
             )
         } else {
-            format!("Ping {DIM}measuring...{RESET}")
+            format!("{DIM}measuring...{RESET}")
         };
         let mut s = format!(
-            "\n{}\n  {mode} - {}\n  {ping}\n",
+            "\n{}\n  {mode}\n  {whose} {}\n  Ping:     {ping}\n",
             rule(&format!("Match {n} - {}", fmt_hms(self.now))),
             self.place(&i.ip, i.port)
         );
+        if i.p2p && i.area == "unknown" && !self.geo.is_loaded() {
+            s.push_str(&format!(
+                "  {DIM}(add the IP2Location files to see where your opponent is){RESET}\n"
+            ));
+        }
         if self.cfg.show_ip {
             s.push_str(&format!(
                 "  {DIM}you: {}:{}{RESET}\n",
