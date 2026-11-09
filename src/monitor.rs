@@ -136,6 +136,8 @@ pub struct Monitor {
     now: Micros,
     /// Matches finished so far.
     pub finished: Vec<MatchSummary>,
+    /// Always-on-top window (`--overlay`).
+    pub overlay: Option<crate::overlay::Overlay>,
 }
 
 impl Monitor {
@@ -157,6 +159,7 @@ impl Monitor {
             probe_ticks: 0,
             now: 0,
             finished: Vec::new(),
+            overlay: None,
         }
     }
 
@@ -187,10 +190,23 @@ impl Monitor {
     }
 
     pub fn update_overlay(&self) {
+        let i = &self.info;
+        if let Some(o) = &self.overlay {
+            o.show(crate::overlay::Status::Match {
+                p2p: i.p2p,
+                provider: if i.p2p {
+                    String::new()
+                } else {
+                    crate::cloud::describe(&i.ip)
+                },
+                area: i.area.clone(),
+                latency: if i.current > 0 { i.current } else { i.initial },
+                loss: i.loss,
+            });
+        }
         if self.cfg.overlay_file.is_none() {
             return;
         }
-        let i = &self.info;
         let elapsed = (self.now - i.start) / 1_000_000;
         let mode = if i.p2p { "peer-peer" } else { "client-server" };
         if elapsed < 91 {
@@ -561,6 +577,9 @@ impl Monitor {
         self.p2p = P2pStats::default();
         self.psp = PspStats::default();
         self.write_overlay("exit");
+        if let Some(o) = &self.overlay {
+            o.show(crate::overlay::Status::Waiting);
+        }
     }
 
     fn log_match(&self, elapsed: i64) {

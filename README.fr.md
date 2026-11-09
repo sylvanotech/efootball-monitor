@@ -26,6 +26,22 @@ si tu es en peer-to-peer, ni ce qui se passe après le coup d'envoi. Avec le mon
 | Pendant le match | non | oui, jusqu'à la fin |
 | Historique | non | `matchlogs.csv` |
 
+## Accepter ou refuser ?
+
+Quand le jeu te trouve un adversaire, tu as quelques secondes pour accepter ou refuser. C'est là que le monitor bipe
+et t'affiche où part le match et la latence. Serveur à Tokyo à 180 ms alors que tu es à Paris ? Refuse dans le jeu et
+relance une recherche.
+
+Avec `--overlay` (Windows), une petite fenêtre reste au-dessus du jeu avec juste l'essentiel :
+
+```text
+CLIENT-SERVER  ·  Google Cloud asia-northeast1
+Japan-Tokyo-Tokyo
+182 ms    0.0% loss
+```
+
+L'outil n'accepte et ne refuse rien à ta place, c'est toi qui décides dans le jeu.
+
 ## Ce que ça fait
 
 - Détecte chaque match et indique s'il est en client-server (via un relais Konami) ou en peer-to-peer.
@@ -39,7 +55,8 @@ si tu es en peer-to-peer, ni ce qui se passe après le coup d'envoi. Avec le mon
   testé (commande `sp`).
 - Enregistre chaque match dans `matchlogs.csv` (durée, serveur, latence, pire perte). Au bout de quelques soirées, tu
   vois quels serveurs et quels horaires te réussissent.
-- Peut écrire l'état en direct dans un fichier texte pour un overlay OBS.
+- Petite fenêtre toujours au premier plan avec le match en cours (`--overlay`, Windows), ou un fichier texte pour un
+  overlay OBS.
 - Peut enregistrer une session en `.pcap`, la rejouer, et l'anonymiser avant de la partager.
 
 L'outil lit seulement une copie du trafic, comme Wireshark. Il ne bloque, ne retarde et ne modifie aucun paquet, et ne
@@ -65,6 +82,10 @@ summary:  elapse 09:28 latency: initial/avg/min/max 38/41/38/97   Max loss rate:
 1. Installe [Npcap](https://npcap.com/#download) avec les options par défaut.
 2. Récupère `efootball-monitor-windows-x64.zip` dans [Releases](../../releases) et extrais-le.
 3. Lance `efootball-monitor.exe`, choisis ta carte réseau, lance eFootball.
+
+Pour la fenêtre au premier plan, lance-le avec `efootball-monitor.exe --overlay` (ou ajoute `--overlay` à la fin de la
+cible d'un raccourci). Le jeu doit être en mode fenêtré ou fenêtré sans bordure : Windows n'affiche rien par-dessus
+le plein écran exclusif.
 
 Pour avoir les villes des serveurs et des adversaires, ajoute les fichiers gratuits IP2Location (voir
 [Installation](#installation)).
@@ -122,13 +143,14 @@ Options :
 | `--geo-dir <DOSSIER>` | dossier du programme | où sont les fichiers `.BIN` IP2Location |
 | `--match-log <FICHIER>` | `matchlogs.csv` | historique des matchs |
 | `--speed-servers <FICHIER>` | `speedtest.txt` | serveurs du test de vitesse (mis à jour tout seul) |
+| `--overlay` | désactivé | petite fenêtre toujours au premier plan avec le match en cours (Windows). Glisse-la pour la déplacer, clic droit pour la cacher jusqu'au prochain match |
 | `--overlay-file <FICHIER>` | désactivé | écrit l'état en direct dans un fichier texte (source texte OBS etc.) |
 | `--record <FICHIER>` | désactivé | enregistre aussi le trafic du jeu dans un `.pcap` |
 
 ## Lire l'affichage
 
 Au début d'un match : l'heure, le numéro du match, le mode, le fournisseur/la localisation du serveur, et les adresses
-locale et distante. En client-server, le nombre jaune est le temps de réponse du serveur au début du match.
+locale et distante. En client-server, le nombre cyan est le temps de réponse du serveur au début du match.
 
 Pendant un match client-server, le serveur est sondé chaque seconde (connexion TCP, ou ping pour les serveurs sur le
 port 5735). Les cinq premières valeurs s'affichent en chiffres, ensuite un caractère par seconde :
@@ -170,6 +192,7 @@ Une ligne par match de plus de 90 s :
 efootball-monitor --record session.pcap                    # joue normalement, le trafic est enregistré
 efootball-monitor replay session.pcap                       # rejoue la session, instantanément
 efootball-monitor replay session.pcap --realtime            # rejoue à la vitesse d'origine
+efootball-monitor replay session.pcap --realtime --overlay  # pareil, avec la fenêtre overlay
 efootball-monitor anonymize session.pcap session-anon.pcap  # nettoie avant de partager
 ```
 

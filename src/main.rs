@@ -10,6 +10,7 @@ mod cloud;
 mod cloud_ranges;
 mod geo;
 mod monitor;
+mod overlay;
 mod packet;
 mod probe;
 mod replay;
@@ -58,6 +59,9 @@ enum Command {
         /// Respect the original timing instead of replaying as fast as possible
         #[arg(long)]
         realtime: bool,
+        /// Show the overlay window while replaying (Windows, best with --realtime)
+        #[arg(long)]
+        overlay: bool,
         /// Only print the final summary (stable format used by regression tests)
         #[arg(long)]
         summary: bool,
@@ -82,7 +86,10 @@ struct LiveArgs {
     /// Folder containing IP2LOCATION-LITE-DB3.BIN / IP2LOCATION-LITE-DB3.IPV6.BIN
     #[arg(long)]
     geo_dir: Option<PathBuf>,
-    /// Write live status to this file for an overlay window
+    /// Show the current match in a small always-on-top window (Windows)
+    #[arg(long)]
+    overlay: bool,
+    /// Write live status to this text file (OBS text source, custom overlays)
     #[arg(long)]
     overlay_file: Option<PathBuf>,
     /// Match log CSV path (matches longer than 90 s)
@@ -205,6 +212,7 @@ fn main() -> Result<()> {
             file,
             local_ips,
             realtime,
+            overlay,
             summary,
             geo_dir,
         }) => {
@@ -213,6 +221,11 @@ fn main() -> Result<()> {
                 local_ips,
                 realtime,
                 geo: open_geo(geo_dir),
+                overlay: if overlay {
+                    overlay::Overlay::start()
+                } else {
+                    None
+                },
             };
             let result = replay::replay(&file, opts)?;
             util::set_quiet(false);
@@ -322,7 +335,11 @@ fn run_live(args: LiveArgs) -> Result<()> {
         overlay_file: args.overlay_file.clone(),
         match_log: Some(args.match_log.clone()),
     };
-    let mon = Arc::new(Mutex::new(Monitor::new(cfg, local_ips, geo, speed)));
+    let mut mon = Monitor::new(cfg, local_ips, geo, speed);
+    if args.overlay {
+        mon.overlay = overlay::Overlay::start();
+    }
+    let mon = Arc::new(Mutex::new(mon));
 
     // Idle/probe worker, ~1 Hz: server latency during client-server matches,
     // speed test report, end-of-match detection.

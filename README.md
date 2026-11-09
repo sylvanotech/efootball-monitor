@@ -26,6 +26,22 @@ you're in peer-to-peer, or what happens after kick-off. Here's what you get with
 | During the match | no | yes, until the end |
 | History | no | `matchlogs.csv` |
 
+## Accept or decline?
+
+When the game finds an opponent, you get a few seconds to accept or decline. The monitor beeps at that point and
+shows where the match goes and the latency. Server in Tokyo at 180 ms while you're in Paris? Decline in the game and
+search again.
+
+With `--overlay` (Windows), a small window stays on top of the game with just what you need:
+
+```text
+CLIENT-SERVER  ·  Google Cloud asia-northeast1
+Japan-Tokyo-Tokyo
+182 ms    0.0% loss
+```
+
+The tool never accepts or declines anything itself, you decide in the game.
+
 ## What it does
 
 - Detects each match and tells you if it's client-server (through a Konami relay) or peer-to-peer.
@@ -39,7 +55,7 @@ you're in peer-to-peer, or what happens after kick-off. Here's what you get with
   (`sp` command).
 - Logs every match to `matchlogs.csv` (duration, server, latency, worst loss). After a few evenings you can see which
   servers and times work for you.
-- Can write the live status to a text file for an OBS overlay.
+- Small always-on-top window with the current match (`--overlay`, Windows), or a text file for an OBS overlay.
 - Can record a session to `.pcap`, replay it later, and anonymize it before sharing.
 
 It only reads a copy of the traffic, like Wireshark does. It doesn't block, delay or change any packet, and doesn't
@@ -65,6 +81,10 @@ summary:  elapse 09:28 latency: initial/avg/min/max 38/41/38/97   Max loss rate:
 1. Install [Npcap](https://npcap.com/#download) with the default options.
 2. Get `efootball-monitor-windows-x64.zip` from [Releases](../../releases) and extract it.
 3. Run `efootball-monitor.exe`, pick your network card, start eFootball.
+
+For the on-top window, start it with `efootball-monitor.exe --overlay` (or add `--overlay` at the end of a
+shortcut's target). The game has to be in windowed or borderless mode: Windows doesn't draw anything over exclusive
+fullscreen.
 
 To see cities for servers and opponents, add the free IP2Location files (see [Installation](#installation)).
 
@@ -121,13 +141,14 @@ Options:
 | `--geo-dir <DIR>` | program folder | where the IP2Location `.BIN` files are |
 | `--match-log <FILE>` | `matchlogs.csv` | match history |
 | `--speed-servers <FILE>` | `speedtest.txt` | speed test servers (updated automatically) |
+| `--overlay` | off | small always-on-top window with the current match (Windows). Drag it to move it, right-click to hide it until the next match |
 | `--overlay-file <FILE>` | off | write the live status to a text file (OBS text source etc.) |
 | `--record <FILE>` | off | also save the game traffic to a `.pcap` |
 
 ## Reading the output
 
 When a match starts you get the time, match number, mode, server provider/location, and the local and remote
-addresses. For client-server matches, the yellow number is the server's response time at the start of the match.
+addresses. For client-server matches, the cyan number is the server's response time at the start of the match.
 
 During a client-server match the server is probed every second (TCP connect, or ping for servers on port 5735).
 The first five values are printed as numbers, then one character per second:
@@ -169,6 +190,7 @@ One line per match longer than 90 s:
 efootball-monitor --record session.pcap                    # play normally, traffic is saved
 efootball-monitor replay session.pcap                       # replay it, instantly
 efootball-monitor replay session.pcap --realtime            # replay at the original speed
+efootball-monitor replay session.pcap --realtime --overlay  # same, with the overlay window
 efootball-monitor anonymize session.pcap session-anon.pcap  # clean it up before sharing
 ```
 
