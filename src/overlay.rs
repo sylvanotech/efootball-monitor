@@ -49,7 +49,12 @@ pub fn lines(s: &Status) -> [String; 3] {
             } else {
                 "-- ms".into()
             };
-            [head, area.clone(), format!("{lat}    {loss:.1}% loss")]
+            let whose = if *p2p { "Opponent" } else { "Server" };
+            [
+                head,
+                format!("{whose}: {area}"),
+                format!("{lat}    {loss:.1}% loss"),
+            ]
         }
     }
 }
@@ -307,7 +312,7 @@ mod tests {
         let s = Status::Match {
             p2p: false,
             provider: "Google Cloud asia-northeast1".into(),
-            area: "Japan-Tokyo-Tokyo".into(),
+            area: "Tokyo, Japan".into(),
             latency: 182,
             loss: 2.5,
         };
@@ -315,7 +320,7 @@ mod tests {
             lines(&s),
             [
                 "CLIENT-SERVER  ·  Google Cloud asia-northeast1".to_string(),
-                "Japan-Tokyo-Tokyo".to_string(),
+                "Server: Tokyo, Japan".to_string(),
                 "182 ms    2.5% loss".to_string()
             ]
         );

@@ -45,6 +45,21 @@ struct Cli {
     command: Option<Command>,
     #[command(flatten)]
     live: LiveArgs,
+    #[command(flatten)]
+    display: DisplayArgs,
+}
+
+#[derive(Args, Debug)]
+struct DisplayArgs {
+    /// Flag matches at or above this ping (ms) as far
+    #[arg(long, global = true, default_value_t = 120)]
+    max_ping: i64,
+    /// Show IP addresses and ports (hidden by default, e.g. when streaming)
+    #[arg(long, global = true)]
+    show_ip: bool,
+    /// Plain ASCII output, for old consoles that show the ping graph as boxes
+    #[arg(long, global = true)]
+    ascii: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -206,8 +221,9 @@ fn main() -> Result<()> {
     let _ = enable_ansi_support::enable_ansi_support();
 
     let cli = Cli::parse();
+    util::set_ascii(cli.display.ascii);
     match cli.command {
-        None => run_live(cli.live),
+        None => run_live(cli.live, &cli.display),
         Some(Command::Replay {
             file,
             local_ips,
@@ -221,6 +237,8 @@ fn main() -> Result<()> {
                 local_ips,
                 realtime,
                 geo: open_geo(geo_dir),
+                max_ping: cli.display.max_ping,
+                show_ip: cli.display.show_ip,
                 overlay: if overlay {
                     overlay::Overlay::start()
                 } else {
@@ -253,7 +271,7 @@ fn main() -> Result<()> {
     }
 }
 
-fn run_live(args: LiveArgs) -> Result<()> {
+fn run_live(args: LiveArgs, display: &DisplayArgs) -> Result<()> {
     out(format!("efootball-monitor {}\n", env!("CARGO_PKG_VERSION")));
     #[cfg(windows)]
     npcap::prepare()?;
@@ -334,6 +352,8 @@ fn run_live(args: LiveArgs) -> Result<()> {
     let cfg = Config {
         overlay_file: args.overlay_file.clone(),
         match_log: Some(args.match_log.clone()),
+        max_ping: display.max_ping,
+        show_ip: display.show_ip,
     };
     let mut mon = Monitor::new(cfg, local_ips, geo, speed);
     if args.overlay {
@@ -370,10 +390,11 @@ fn run_live(args: LiveArgs) -> Result<()> {
             for line in std::io::stdin().lock().lines().map_while(Result::ok) {
                 let m = mon.lock().unwrap();
                 match line.trim().to_ascii_lowercase().as_str() {
-                    "hh" => m.speed.print_list(),
-                    "sp" => m.speed.print_detail(&m.geo),
+                    "servers" | "hh" => m.speed.print_list(),
+                    "speed" | "sp" => m.speed.print_detail(&m.geo),
+                    "help" | "h" | "?" => out(util::HELP),
                     "" => {}
-                    _ => out(util::HELP),
+                    other => out(format!("Unknown command '{other}'.\n{}", util::HELP)),
                 }
             }
         });

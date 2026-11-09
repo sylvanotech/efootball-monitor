@@ -20,7 +20,10 @@ use std::path::PathBuf;
 use crate::geo::GeoDb;
 use crate::packet::UdpPacket;
 use crate::speed::{is_speed_port, SpeedServers};
-use crate::util::{brief, color_dot, fmt_full, fmt_full_utc, fmt_hms, out, Micros, RESET, YELLOW};
+use crate::util::{
+    fmt_clock, fmt_duration, fmt_full, fmt_hm, fmt_hms, fmt_ms, out, rule, sparkline, status_line,
+    verdict, Micros, BOLD, DIM, RESET, YELLOW,
+};
 
 pub const PORT_ICMP_ONLY: u16 = 5735; // 0x1667: probe with ICMP instead of TCP
 const STUN_PORTS: [u16; 2] = [3478, 5478];
@@ -29,7 +32,27 @@ pub struct Config {
     pub overlay_file: Option<PathBuf>,
     /// `None` = do not write a match log (replays).
     pub match_log: Option<PathBuf>,
+    /// Matches at or above this latency (ms) are flagged as far.
+    pub max_ping: i64,
+    /// Print IP addresses and ports (hidden by default, e.g. for streamers).
+    pub show_ip: bool,
 }
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            overlay_file: None,
+            match_log: None,
+            max_ping: 120,
+            show_ip: false,
+        }
+    }
+}
+
+/// Number of samples kept for the live ping graph.
+const GRAPH_LEN: usize = 30;
+/// Seconds of match time covered by each recap line.
+const RECAP_SECS: i64 = 60;
 
 /// One finished match, in a stable text form used by replays and regression tests.
 #[derive(Clone, Debug, PartialEq)]
@@ -130,7 +153,14 @@ pub struct Monitor {
     last_p2p: Micros,
     last_psp: Micros,
     match_count: u32,
-    column: usize,
+    /// Recent latency samples for the live graph.
+    graph: Vec<i64>,
+    /// Samples since the last recap line, and when that period started.
+    recap: Vec<i64>,
+    recap_start: Micros,
+    recap_loss: f32,
+    /// The last sample was a spike (alert once per spike, not every second).
+    in_spike: bool,
     probe_ticks: u32,
     /// Current time: the last packet timestamp or tick, whichever is later.
     now: Micros,
@@ -155,7 +185,11 @@ impl Monitor {
             last_p2p: 0,
             last_psp: 0,
             match_count: 1,
-            column: 0,
+            graph: Vec::new(),
+            recap: Vec::new(),
+            recap_start: 0,
+            recap_loss: 0.0,
+            in_spike: false,
             probe_ticks: 0,
             now: 0,
             finished: Vec::new(),
@@ -303,11 +337,7 @@ impl Monitor {
                         self.info.loss = rate;
                         self.update_match_info(0, rate);
                         if (self.psp_loss_prev - rate).abs() > 4.0 && self.info.active {
-                            out(format!(
-                                "\n{} fluctuation: {:.1}% loss    ",
-                                fmt_hms(ts),
-                                rate
-                            ));
+                            self.loss_alert(ts, rate, self.psp_loss_prev);
                             self.psp_loss_prev = rate;
                         }
                     }
@@ -365,7 +395,7 @@ impl Monitor {
                     self.print_new_match();
                 } else {
                     self.update_match_info(delay, 0.0);
-                    self.print_sample(delay, self.p2p.stun_ticks);
+                    self.print_sample(delay);
                     self.p2p.stun_ticks += 1;
                 }
             }
@@ -391,11 +421,7 @@ impl Monitor {
                     self.info.loss = rate;
                     self.update_match_info(0, rate);
                     if (rate - self.p2p_loss_prev).abs() > 4.0 && self.info.active {
-                        out(format!(
-                            "\n{} fluctuation: {:.1}% loss    ",
-                            fmt_hms(self.now),
-                            rate
-                        ));
+                        self.loss_alert(self.now, rate, self.p2p_loss_prev);
                         self.p2p_loss_prev = rate;
                     }
                 }
@@ -416,7 +442,10 @@ impl Monitor {
         }
         if self.p2p.major_ip.is_empty() {
             if self.info.ip != src && self.info.print_count > 0 {
-                out(format!("{YELLOW}\nactual ip changes to:{src} {RESET}"));
+                out(format!(
+                    "  {YELLOW}!{RESET} Opponent address changed: {}\n",
+                    self.place(src, 0)
+                ));
             }
             self.info.ip = src.into();
             self.info.area = self.geo.area(src);
@@ -440,15 +469,14 @@ impl Monitor {
         p2p: bool,
         delay: i64,
     ) {
-        let i = &mut self.info;
+        let i = &self.info;
         if !i.ip.is_empty() && i.ip != ip && i.print_count > 0 {
             out(format!(
-                "{YELLOW}trying to switch IP {}:{} ({}){RESET}\n",
-                ip,
-                port,
-                self.geo.area(ip)
+                "  {YELLOW}!{RESET} Switching to {}\n",
+                self.place(ip, port)
             ));
         }
+        let i = &mut self.info;
         i.ip = ip.into();
         i.area = self.geo.area(ip);
         i.local_ip = local.into();
@@ -458,9 +486,12 @@ impl Monitor {
         i.start = self.now;
         i.active = true;
         if delay != 0 {
-            i.initial = delay;
+            // The game may do several handshakes: keep the first one as the initial latency.
+            if i.initial == 0 {
+                i.initial = delay;
+                i.initial_counted = false;
+            }
             i.current = delay;
-            i.initial_counted = false;
         }
     }
 
@@ -484,71 +515,168 @@ impl Monitor {
         }
     }
 
-    fn print_new_match(&mut self) {
-        self.column = 0;
-        let i = &self.info;
-        if i.print_count == 0 {
-            if self.match_count == 1 {
-                out(brief());
-            }
-            let n = self.match_count;
-            self.match_count += 1;
-            let mut s = format!("\n\n{} {:3}\t", fmt_hms(self.now), n);
-            if i.p2p {
-                s.push_str("\x1b[40;32;1mpeer-peer\x1b[0m");
-            } else {
-                let cloud = crate::cloud::describe(&i.ip);
-                s.push_str(&format!("{YELLOW}client-server{RESET} ({cloud})"));
-            }
-            s.push_str(" match from ");
-            s.push_str(&format!("{YELLOW} {}{RESET}\n", i.area));
-            if i.ip.contains(':') {
-                s.push_str(&format!(
-                    "\t\tRemote [{}]:{}  local [{}]:{}\n",
-                    i.ip, i.port, i.local_ip, i.local_port
-                ));
-            } else {
-                s.push_str(&format!(
-                    "\t\tlocal {}:{}  Remote {}:{}\n",
-                    i.local_ip, i.local_port, i.ip, i.port
-                ));
-            }
-            if i.initial > 0 {
-                s.push_str(&format!("\x1b[40;36;1m{:4}ms{RESET}", i.initial));
-            }
-            s.push('\x07');
-            out(s);
-        } else if i.initial > 0 {
-            out(format!("\x1b[40;36;1m{:4}ms{RESET}", i.initial));
+    /// Where a remote address is: location, cloud provider, and the address with `--show-ip`.
+    fn place(&self, ip: &str, port: u16) -> String {
+        let area = self.geo.area(ip);
+        let cloud = crate::cloud::describe(ip);
+        let mut s = format!("{BOLD}{area}{RESET}");
+        if crate::cloud::lookup(ip).is_some() && cloud != area {
+            s.push_str(&format!(" ({cloud})"));
         }
+        if self.cfg.show_ip {
+            if ip.contains(':') {
+                s.push_str(&format!("  {DIM}[{ip}]:{port}{RESET}"));
+            } else {
+                s.push_str(&format!("  {DIM}{ip}:{port}{RESET}"));
+            }
+        }
+        s
+    }
+
+    fn loss_alert(&self, ts: Micros, rate: f32, prev: f32) {
+        let color = if rate > prev { YELLOW } else { DIM };
+        out(format!(
+            "  {color}!{RESET} {} packet loss {rate:.1}% (was {prev:.1}%)\n",
+            fmt_hms(ts)
+        ));
+        self.draw_status();
+    }
+
+    /// Match header, printed once when a match is detected.
+    fn print_new_match(&mut self) {
+        let first = self.info.print_count == 0;
         self.info.print_count += 1;
         if self.info.initial > 0 && !self.info.initial_counted {
             self.info.initial_counted = true;
             let initial = self.info.initial;
             self.update_match_info(initial, 0.0);
         }
-    }
-
-    /// First 5 samples as yellow numbers, then dot + overwritten number.
-    fn print_sample(&mut self, ms: i64, tick: u32) {
-        if tick < 5 {
-            out(format!("{YELLOW} {ms}{RESET}"));
+        if !first {
             return;
         }
-        let mut s = String::new();
-        if self.column + 5 >= 75 {
-            s.push('\n');
-            self.column = 0;
-        } else if self.column > 0 {
-            s.push_str("\x08\x08\x08\x08");
+        self.graph.clear();
+        self.recap.clear();
+        self.recap_start = self.now;
+        self.recap_loss = 0.0;
+        self.in_spike = false;
+        let i = &self.info;
+        let n = self.match_count;
+        self.match_count += 1;
+        // Say clearly whose location this is: in client-server the opponent is hidden behind the server.
+        let (mode, whose) = if i.p2p {
+            (
+                format!("Peer-to-peer {DIM}(direct link to your opponent){RESET}"),
+                "Opponent:",
+            )
+        } else {
+            (
+                format!("Client-server {DIM}(you and your opponent both play through this server){RESET}"),
+                "Server:  ",
+            )
+        };
+        let ping = if i.initial > 0 {
+            format!(
+                "{}   {}",
+                fmt_ms(i.initial),
+                verdict(i.initial, self.cfg.max_ping)
+            )
+        } else {
+            format!("{DIM}measuring...{RESET}")
+        };
+        let mut s = format!(
+            "\n{}\n  {mode}\n  {whose} {}\n  Ping:     {ping}\n",
+            rule(&format!("Match {n} - {}", fmt_hms(self.now))),
+            self.place(&i.ip, i.port)
+        );
+        if i.p2p && i.area == "unknown" && !self.geo.is_loaded() {
+            s.push_str(&format!(
+                "  {DIM}(add the IP2Location files to see where your opponent is){RESET}\n"
+            ));
         }
-        s.push_str(color_dot(ms));
-        s.push_str(&format!("{ms:4}"));
-        self.column += 5;
+        if self.cfg.show_ip {
+            s.push_str(&format!(
+                "  {DIM}you: {}:{}{RESET}\n",
+                i.local_ip, i.local_port
+            ));
+        }
+        s.push('\x07');
         out(s);
     }
 
+    /// Adds a latency sample to the live graph.
+    fn print_sample(&mut self, ms: i64) {
+        if self.recap_start == 0 {
+            self.recap_start = self.now;
+        }
+        if (self.now - self.recap_start) / 1_000_000 >= RECAP_SECS {
+            self.print_recap();
+        }
+        self.graph.push(ms);
+        if self.graph.len() > GRAPH_LEN {
+            self.graph.remove(0);
+        }
+        self.recap.push(ms);
+        self.recap_loss = self.recap_loss.max(self.info.loss);
+
+        let spike = ms >= self.cfg.max_ping && ms < 1000;
+        if spike && !self.in_spike {
+            out(format!(
+                "  {YELLOW}!{RESET} {} ping spike {}\n",
+                fmt_hms(self.now),
+                fmt_ms(ms)
+            ));
+        }
+        self.in_spike = spike;
+        self.draw_status();
+    }
+
+    /// One permanent line with the exact figures of the last period.
+    fn print_recap(&mut self) {
+        if let Some((min, avg, max)) = stats(&self.recap) {
+            let lost = self.recap.iter().filter(|&&ms| ms >= 1000).count();
+            let mut s = format!(
+                "  {DIM}{}{RESET}  ping avg {} ({min}-{max}), loss {:.1}%",
+                fmt_hm(self.recap_start),
+                fmt_ms(avg),
+                self.recap_loss
+            );
+            if lost > 0 {
+                s.push_str(&format!(", {lost} s without answer"));
+            }
+            s.push('\n');
+            out(s);
+        }
+        self.recap.clear();
+        self.recap_start = self.now;
+        self.recap_loss = self.info.loss;
+    }
+
+    fn draw_status(&self) {
+        if !self.info.active || self.graph.is_empty() {
+            return;
+        }
+        let i = &self.info;
+        let last = *self.graph.last().unwrap_or(&0);
+        let range = match stats(&self.graph) {
+            Some((min, avg, max)) => {
+                format!("{DIM}min{RESET} {min} {DIM}avg{RESET} {avg} {DIM}max{RESET} {max}")
+            }
+            None => String::new(),
+        };
+        status_line(&format!(
+            "  ping {} {}  {range}  loss {:.1}%  {}",
+            sparkline(&self.graph),
+            fmt_ms(last),
+            i.loss,
+            fmt_clock((self.now - i.start) / 1_000_000)
+        ));
+    }
+
     fn match_end(&mut self) {
+        crate::util::keep_status_line();
+        if self.recap.len() >= 10 {
+            self.print_recap();
+        }
         let i = &self.info;
         let elapsed = (self.now - i.start) / 1_000_000;
         self.finished.push(MatchSummary {
@@ -563,12 +691,30 @@ impl Monitor {
             max: i.max,
             max_loss: i.max_loss,
         });
-        if elapsed > 90 {
+        if elapsed >= 60 {
+            let ping = if i.samples > 0 {
+                format!("ping avg {} (min {}, max {})", fmt_ms(i.avg), i.min, i.max)
+            } else {
+                "ping n/a".into()
+            };
             out(format!(
-                "summary:  elapse {:02}:{:02} latency: initial/avg/min/max {}/{}/{}/{}   Max loss rate: {:.1}%\n",
-                elapsed / 60, elapsed % 60, i.initial, i.avg, i.min, i.max, i.max_loss
+                "  Match over - {} - {ping} - worst loss {:.1}%\n",
+                fmt_duration(elapsed),
+                i.max_loss
             ));
-            self.log_match(elapsed);
+            if elapsed > 90 {
+                self.log_match(elapsed);
+            }
+        } else if i.p2p {
+            out(format!(
+                "  {DIM}Match ended after {} (declined or cancelled){RESET}\n",
+                fmt_duration(elapsed)
+            ));
+        } else {
+            out(format!(
+                "  {DIM}Match ended after {} (declined, cancelled, or the game switched to TCP){RESET}\n",
+                fmt_duration(elapsed)
+            ));
         }
         self.info = MatchInfo {
             print_count: 0,
@@ -604,7 +750,7 @@ impl Monitor {
             fmt_full(i.start),
             i.ip,
             i.port,
-            i.area,
+            csv_field(&i.area),
             if i.p2p { "peer-peer" } else { "client-server" },
             if i.p2p {
                 "-".to_string()
@@ -634,12 +780,11 @@ impl Monitor {
     }
 
     pub fn after_probe(&mut self, ms: i64) {
-        let t = self.probe_ticks;
-        self.print_sample(ms, t);
         self.probe_ticks += 1;
         if ms < 1000 {
             self.update_match_info(ms, 0.0);
         }
+        self.print_sample(ms);
     }
 
     /// Ends a match still open (end of a replay).
@@ -658,19 +803,28 @@ impl Monitor {
         let psp_running = self.psp.active;
         self.speed.tick(now, psp_running);
         if self.psp.active && (now - self.last_psp) / 1_000_000 > 8 {
-            out(format!(
-                "\nUTC {} Client-server match ended, cancelled or switched to TCP\n",
-                fmt_full_utc(now)
-            ));
             self.match_end();
         }
         if self.p2p.session_started && (now - self.last_p2p) / 1_000_000 > 3 {
-            out(format!(
-                "\nUTC {} Match ended or cancelled\n",
-                fmt_full_utc(now)
-            ));
             self.match_end();
         }
+    }
+}
+
+/// Min, average and max of the answered samples (no-answer samples are 1000 ms or more).
+fn stats(samples: &[i64]) -> Option<(i64, i64, i64)> {
+    let ok: Vec<i64> = samples.iter().copied().filter(|&ms| ms < 1000).collect();
+    let min = *ok.iter().min()?;
+    let max = *ok.iter().max()?;
+    Some((min, ok.iter().sum::<i64>() / ok.len() as i64, max))
+}
+
+/// Quotes a CSV field when needed (locations like `Paris, France` contain commas).
+fn csv_field(s: &str) -> String {
+    if s.contains([',', '"']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
     }
 }
 
@@ -694,8 +848,8 @@ mod tests {
         let _ = std::fs::remove_file(&log);
         Monitor::new(
             Config {
-                overlay_file: None,
                 match_log: Some(log),
+                ..Default::default()
             },
             vec!["192.168.1.10".into()],
             GeoDb::default(),
@@ -781,10 +935,30 @@ mod tests {
         let csv = std::fs::read_to_string(m.cfg.match_log.as_ref().unwrap()).unwrap();
         assert!(
             csv.lines().nth(1).unwrap().contains(
-                ",15.188.178.40,30123,AWS eu-west-3,client-server,AWS eu-west-3,00:02:00,48,"
+                ",15.188.178.40,30123,\"Paris, France\",client-server,AWS eu-west-3,00:02:00,48,"
             ),
             "{csv}"
         );
+    }
+
+    #[test]
+    fn recap_every_minute_and_spikes() {
+        let mut m = mon("recap");
+        m.info.active = true;
+        m.info.start = 1_000_000;
+        m.now = 1_000_000;
+        assert_eq!(stats(&[40, 1000, 20, 30]), Some((20, 30, 40)));
+        assert_eq!(stats(&[1000]), None);
+        for s in 0..59 {
+            m.now = 1_000_000 + s * 1_000_000;
+            m.print_sample(if s == 30 { 250 } else { 40 });
+            assert_eq!(m.in_spike, s == 30);
+        }
+        assert_eq!(m.recap.len(), 59);
+        m.now += 2_000_000;
+        m.print_sample(40);
+        assert_eq!(m.recap.len(), 1, "a new period starts after 60 s");
+        assert_eq!(m.graph.len(), GRAPH_LEN);
     }
 
     #[test]

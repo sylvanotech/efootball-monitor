@@ -45,6 +45,8 @@ pub struct ReplayOptions {
     pub local_ips: Vec<String>,
     pub realtime: bool,
     pub geo: GeoDb,
+    pub max_ping: i64,
+    pub show_ip: bool,
     /// Show the overlay window (use with `realtime`).
     pub overlay: Option<crate::overlay::Overlay>,
 }
@@ -86,8 +88,9 @@ pub fn replay(path: &Path, opts: ReplayOptions) -> Result<ReplayResult> {
         }
     ));
     let cfg = Config {
-        overlay_file: None,
-        match_log: None,
+        max_ping: opts.max_ping,
+        show_ip: opts.show_ip,
+        ..Default::default()
     };
     let mut m = Monitor::new(cfg, local_ips, opts.geo, SpeedServers::in_memory());
     m.overlay = opts.overlay;
@@ -421,6 +424,8 @@ mod tests {
             local_ips: Vec::new(),
             realtime: false,
             geo: GeoDb::default(),
+            max_ping: 120,
+            show_ip: false,
             overlay: None,
         }
     }
