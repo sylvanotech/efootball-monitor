@@ -18,6 +18,11 @@ pub fn is_speed_port(p: u16) -> bool {
 }
 
 const MAX_PENDING: usize = 2000;
+
+/// City and country for cloud servers (also for lists saved by older versions), else the saved name.
+fn display_name(sv: &SpeedServer) -> String {
+    crate::cloud::location(&sv.ip).map_or_else(|| sv.region.replace('_', " "), str::to_string)
+}
 const PENDING_TTL_MS: i64 = 2000;
 
 #[derive(Clone, Debug, Default)]
@@ -213,7 +218,7 @@ impl SpeedServers {
             let lost = sv.requests.saturating_sub(sv.responses);
             s.push_str(&format!(
                 "  {:<28} {}{:>4} ms{RESET}  {DIM}min {:>3}{RESET}  {}/{}",
-                sv.region.replace('_', " "),
+                display_name(sv),
                 latency_color(avg),
                 avg,
                 sv.min,
@@ -283,7 +288,7 @@ impl SpeedServers {
             s.push_str(&format!(
                 "  {:<40} {}\n",
                 format!("{}:{}", sv.ip, sv.port),
-                sv.region.replace('_', " ")
+                display_name(sv)
             ));
         }
         if self.servers.is_empty() {
@@ -367,7 +372,7 @@ mod tests {
         assert!(s.servers.is_empty());
         let geo = GeoDb::default();
         s.on_request("34.92.192.14", 5521, 7, 1_000_000, &geo);
-        assert_eq!(s.servers[0].region, "asia-east2");
+        assert_eq!(s.servers[0].region, "Hong_Kong");
         s.on_request("34.92.192.14", 5521, 8, 1_001_000, &geo);
         s.on_response("34.92.192.14", 8, 1_031_000);
         s.on_response("34.92.192.14", 7, 1_042_000);

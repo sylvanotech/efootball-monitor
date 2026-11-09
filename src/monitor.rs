@@ -671,7 +671,7 @@ impl Monitor {
             fmt_full(i.start),
             i.ip,
             i.port,
-            i.area,
+            csv_field(&i.area),
             if i.p2p { "peer-peer" } else { "client-server" },
             if i.p2p {
                 "-".to_string()
@@ -729,6 +729,15 @@ impl Monitor {
         if self.p2p.session_started && (now - self.last_p2p) / 1_000_000 > 3 {
             self.match_end();
         }
+    }
+}
+
+/// Quotes a CSV field when needed (locations like `Paris, France` contain commas).
+fn csv_field(s: &str) -> String {
+    if s.contains([',', '"']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
     }
 }
 
@@ -839,7 +848,7 @@ mod tests {
         let csv = std::fs::read_to_string(m.cfg.match_log.as_ref().unwrap()).unwrap();
         assert!(
             csv.lines().nth(1).unwrap().contains(
-                ",15.188.178.40,30123,AWS eu-west-3,client-server,AWS eu-west-3,00:02:00,48,"
+                ",15.188.178.40,30123,\"Paris, France\",client-server,AWS eu-west-3,00:02:00,48,"
             ),
             "{csv}"
         );

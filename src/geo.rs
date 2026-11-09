@@ -123,6 +123,10 @@ impl GeoDb {
         if let Some((p, "GLOBAL")) = cloud {
             return format!("Anycast ({})", p.name());
         }
+        // The provider's own region is more reliable than IP geolocation for cloud servers.
+        if let Some(loc) = crate::cloud::location(ip) {
+            return loc.to_string();
+        }
         match self.record(ip) {
             Some((c, r, city)) if c != "-" => {
                 let c = match c.as_str() {
@@ -147,6 +151,9 @@ impl GeoDb {
         if let Some((_, "GLOBAL")) = crate::cloud::lookup(ip) {
             return "Anycast".into();
         }
+        if let Some(loc) = crate::cloud::location(ip) {
+            return loc.replace(' ', "_");
+        }
         match self.record(ip) {
             Some((c, _, city)) if c != "-" => city.replace(' ', "_"),
             _ => crate::cloud::lookup(ip).map_or_else(|| "unknown".into(), |(_, r)| r.to_string()),
@@ -170,14 +177,9 @@ mod tests {
     #[test]
     fn falls_back_to_cloud_region_without_db() {
         let g = GeoDb::default();
-        assert!(
-            g.area("34.84.43.65")
-                .starts_with("Google Cloud asia-northeast1"),
-            "{}",
-            g.area("34.84.43.65")
-        );
+        assert_eq!(g.area("34.84.43.65"), "Tokyo, Japan");
         assert_eq!(g.area("15.197.143.184"), "Anycast (AWS)");
-        assert_eq!(g.city("15.188.178.40"), "eu-west-3");
+        assert_eq!(g.city("15.188.178.40"), "Paris,_France");
         assert_eq!(g.area("81.2.3.4"), "unknown");
     }
 
@@ -189,13 +191,13 @@ mod tests {
         };
         let g = GeoDb::open(Path::new(&dir));
         assert!(g.is_loaded());
-        assert_eq!(g.area("34.84.43.65"), "Japan-Tokyo-Tokyo");
+        assert_eq!(g.area("34.84.43.65"), "Tokyo, Japan");
         assert!(
             g.area("8.8.8.8").starts_with("USA-California"),
             "{}",
             g.area("8.8.8.8")
         );
         assert!(g.area("2001:4860:4860::8888").starts_with("USA"));
-        assert_eq!(g.city("34.159.137.177"), "Frankfurt_am_Main");
+        assert_eq!(g.city("34.159.137.177"), "Frankfurt,_Germany");
     }
 }

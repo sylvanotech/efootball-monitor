@@ -7,6 +7,8 @@
 * IP addresses hidden by default (`--show-ip` to show them).
 * Commands renamed: `speed`, `servers`, `help` (the old `sp` and `hh` still work).
 * `--ascii` for consoles without Unicode block characters.
+* Servers are shown by city and country (`Johannesburg, South Africa`) instead of the cloud region code, which is
+  also more reliable than IP geolocation for cloud addresses. The `Region` column of `matchlogs.csv` changes accordingly.
 
 ## 0.1.0-beta.1 — 2026-11-09
 

@@ -39,7 +39,7 @@ With `--overlay` (Windows), a small window stays on top of the game with just wh
 
 ```text
 CLIENT-SERVER  ·  Google Cloud asia-northeast1
-Japan-Tokyo-Tokyo
+Tokyo, Japan
 182 ms    0.0% loss
 ```
 
@@ -48,8 +48,8 @@ The tool never accepts or declines anything itself, you decide in the game.
 ## What it does
 
 - Detects each match and tells you if it's client-server (through a Konami relay) or peer-to-peer.
-- Shows the server's cloud region (Google Cloud or AWS, e.g. `asia-northeast1`, `eu-west-3`), or the opponent's
-  country and city if you add the IP2Location database.
+- Shows where the server is (e.g. `Tokyo, Japan`, `Johannesburg, South Africa`, from its Google Cloud or AWS region),
+  or the opponent's country and city if you add the IP2Location database.
 - Measures the server's response time at match start from the game's own handshake, then the latency every second
   as a small live graph, with a GOOD / OK / FAR hint to help you accept or decline.
 - Computes packet loss (server/opponent to you) and prints a line when it moves by more than 4 points.
@@ -69,11 +69,11 @@ switch can mirror the console's port.
 
 ```text
 ── Match 3 - 21:04:12 ──────────────────────────────────────
-  Client-server - Japan-Tokyo-Tokyo (Google Cloud asia-northeast1)
+  Client-server - Tokyo, Japan (Google Cloud asia-northeast1)
   Ping 182 ms   FAR - consider declining
 
 ── Match 4 - 21:05:40 ──────────────────────────────────────
-  Client-server - France-Ile-de-France-Paris (AWS eu-west-3)
+  Client-server - Paris, France (AWS eu-west-3)
   Ping 38 ms   GOOD
   ! 21:07:55 packet loss 12.5% (was 0.0%)
   ping ▁▁▂▁▁▁▃▁▁▂▁▁▁▅▁▁▁▂▁▁  41 ms   loss 0.0%   09:28
@@ -92,7 +92,7 @@ For the on-top window, start it with `efootball-monitor.exe --overlay` (or add `
 shortcut's target). The game has to be in windowed or borderless mode: Windows doesn't draw anything over exclusive
 fullscreen.
 
-To see cities for servers and opponents, add the free IP2Location files (see [Installation](#installation)).
+To see where peer-to-peer opponents are, add the free IP2Location files (see [Installation](#installation)).
 
 This is a community project. It is not affiliated with or endorsed by Konami.
 
@@ -115,14 +115,14 @@ traffic on that adapter, so will this.
 
 1. Windows only: install [Npcap](https://npcap.com/#download).
 2. Download the archive for your system from [Releases](../../releases) and extract it somewhere.
-3. Optional: the free IP2Location LITE DB3 database, for cities.
+3. Optional: the free IP2Location LITE DB3 database, to locate peer-to-peer opponents.
    - Make a free account on <https://lite.ip2location.com>.
    - Download DB3 LITE BIN for IPv4 (`IP2LOCATION-LITE-DB3.BIN`), and the IPv6 one if you want
      (`IP2LOCATION-LITE-DB3.IPV6.BIN`).
    - Put the `.BIN` files next to the program.
 
-   Without them, Konami servers still show their cloud region (`Google Cloud asia-northeast1`, `AWS eu-west-3`...),
-   but peer-to-peer opponents show up as `unknown`.
+   Without them, Konami servers still show their city and country (`Tokyo, Japan`, `Paris, France`...), but
+   peer-to-peer opponents show up as `unknown`.
 
 ## Usage
 
