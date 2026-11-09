@@ -7,12 +7,14 @@ code change, and how a detection bug gets a permanent test once it is fixed.
 | File | Content |
 |---|---|
 | `synthetic-session.pcap` | Generated traffic (not a real game): speed test, one client-server match, one peer-to-peer match. Regenerate with `cargo test write_synthetic_fixture -- --ignored`. |
+| `real-2026-11-client-server.pcap` | Real PC session: in-game speed test (~100 servers) and one client-server match in Johannesburg with a loss burst. Packets cut to 62 bytes (headers + the start of the game payload, all the detection needs). |
 
 ## Adding a real capture
 
 1. Record a session: `efootball-monitor --record session.pcap` (or capture UDP with Wireshark).
 2. Anonymize it: `efootball-monitor anonymize session.pcap fixtures/<short-name>.pcap`.
-   Keep it small: one or two matches is enough (a few MB at most).
+   Keep it small: one or two matches is enough (a few MB at most). Cutting every packet to its first 62 bytes
+   (`editcap -s 62` from Wireshark) keeps everything the detection needs and divides the size by about 8.
 3. Create the expected result from the replay, then **check by hand that it is correct** (right match mode, server,
    plausible latency and loss):
 
