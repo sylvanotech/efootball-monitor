@@ -77,8 +77,13 @@ routeur ou switch sait faire du port mirroring.
 ── Match 4 - 21:05:40 ──────────────────────────────────────
   Client-server - Paris, France (AWS eu-west-3)
   Ping 38 ms   GOOD
+  21:05  ping avg 41 ms (38-52), loss 0.0%
+  21:06  ping avg 44 ms (38-97), loss 0.0%
+  ! 21:07:12 ping spike 212 ms
   ! 21:07:55 packet loss 12.5% (was 0.0%)
-  ping ▁▁▂▁▁▁▃▁▁▂▁▁▁▅▁▁▁▂▁▁  41 ms   loss 0.0%   09:28
+  21:07  ping avg 52 ms (39-212), loss 12.5%
+  ...
+  ping ▁▁▂▁▁▁▃▁▁▂▁▁▁▅▁▁▁▂▁▁ 41 ms  min 38 avg 42 max 97  loss 0.0%  09:28
   Match over - 9 min 28 s - ping avg 41 ms (min 38, max 97) - worst loss 12.5%
 ```
 
@@ -167,9 +172,14 @@ peer-to-peer), où part le match, et le ping mesuré par le jeu lui-même au dé
 - `OK` : entre 60 ms et la limite `--max-ping` (120 ms par défaut)
 - `FAR - consider declining` : à la limite ou au-dessus, mieux vaut refuser
 
-**Pendant le match**, une ligne se met à jour chaque seconde : un petit graphique des 40 dernières secondes (une
-barre par seconde, plus haute = plus lent), le ping actuel, la perte de paquets et le temps de jeu. Couleurs : vert
-sous 50 ms, jaune sous 100 ms, orange sous 200 ms, rouge au-dessus ou pas de réponse.
+**Pendant le match**, une ligne se met à jour chaque seconde : un petit graphique des 30 dernières secondes (une
+barre par seconde, plus haute = plus lent), le ping actuel, le min / la moyenne / le max exacts sur ces 30 secondes,
+la perte de paquets et le temps de jeu. Couleurs : vert sous 50 ms, jaune sous 100 ms, orange sous 200 ms, rouge
+au-dessus ou pas de réponse.
+
+Au-dessus, une ligne reste dans l'historique chaque minute avec les chiffres exacts de cette minute
+(`21:06  ping avg 44 ms (38-97), loss 0.0%`) : tu peux remonter et revoir tout le match. Chaque fois que le ping
+dépasse `--max-ping`, `! ping spike 212 ms` s'affiche avec l'heure.
 
 En client-server, le ping en direct vient de nos propres sondes vers le serveur (connexion TCP, ou ping pour les
 serveurs sur le port 5735), donc il peut être un peu différent de la mesure du jeu affichée au début. En peer-to-peer,

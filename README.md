@@ -75,8 +75,13 @@ switch can mirror the console's port.
 ── Match 4 - 21:05:40 ──────────────────────────────────────
   Client-server - Paris, France (AWS eu-west-3)
   Ping 38 ms   GOOD
+  21:05  ping avg 41 ms (38-52), loss 0.0%
+  21:06  ping avg 44 ms (38-97), loss 0.0%
+  ! 21:07:12 ping spike 212 ms
   ! 21:07:55 packet loss 12.5% (was 0.0%)
-  ping ▁▁▂▁▁▁▃▁▁▂▁▁▁▅▁▁▁▂▁▁  41 ms   loss 0.0%   09:28
+  21:07  ping avg 52 ms (39-212), loss 12.5%
+  ...
+  ping ▁▁▂▁▁▁▃▁▁▂▁▁▁▅▁▁▁▂▁▁ 41 ms  min 38 avg 42 max 97  loss 0.0%  09:28
   Match over - 9 min 28 s - ping avg 41 ms (min 38, max 97) - worst loss 12.5%
 ```
 
@@ -164,9 +169,13 @@ peer-to-peer), where it goes, and the ping measured by the game itself at the st
 - `OK`: between 60 ms and the `--max-ping` limit (120 ms by default)
 - `FAR - consider declining`: at or above the limit
 
-**During the match**, one line is updated every second: a small graph of the last 40 seconds (one bar per second,
-taller = slower), the current ping, the packet loss and the match time. Colors: green under 50 ms, yellow under
-100 ms, orange under 200 ms, red above or no answer.
+**During the match**, one line is updated every second: a small graph of the last 30 seconds (one bar per second,
+taller = slower), the current ping, the exact min / average / max over those 30 seconds, the packet loss and the
+match time. Colors: green under 50 ms, yellow under 100 ms, orange under 200 ms, red above or no answer.
+
+Above it, a line stays in the history every minute with the exact figures of that minute
+(`21:06  ping avg 44 ms (38-97), loss 0.0%`), so you can scroll back through the whole match. Each time the ping
+goes over `--max-ping`, `! ping spike 212 ms` is printed with the time.
 
 In client-server, the live ping comes from our own probes to the server (TCP connect, or ping for servers on port
 5735), so it can differ a bit from the game's own measurement in the header. In peer-to-peer, it comes from the

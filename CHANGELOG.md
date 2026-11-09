@@ -4,6 +4,8 @@
 
 * New terminal display: one block per match with a GOOD / OK / FAR hint (`--max-ping`), a live ping graph on a
   single line, readable loss alerts and end-of-match summary, speed test table.
+* Exact figures next to the graph: min / avg / max over the last 30 s, a recap line every minute, and a
+  `ping spike` alert when the ping goes over `--max-ping`.
 * IP addresses hidden by default (`--show-ip` to show them).
 * Commands renamed: `speed`, `servers`, `help` (the old `sp` and `hh` still work).
 * `--ascii` for consoles without Unicode block characters.

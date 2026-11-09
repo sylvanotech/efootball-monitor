@@ -28,6 +28,11 @@ pub fn fmt_full(ts: Micros) -> String {
     local(ts).format("%Y/%m/%d %H:%M:%S").to_string()
 }
 
+/// `%H:%M`, local time.
+pub fn fmt_hm(ts: Micros) -> String {
+    local(ts).format("%H:%M").to_string()
+}
+
 /// TimeString type 3: `%H:%M:%S`, local time.
 pub fn fmt_hms(ts: Micros) -> String {
     local(ts).format("%H:%M:%S").to_string()

@@ -21,8 +21,8 @@ use crate::geo::GeoDb;
 use crate::packet::UdpPacket;
 use crate::speed::{is_speed_port, SpeedServers};
 use crate::util::{
-    fmt_clock, fmt_duration, fmt_full, fmt_hms, fmt_ms, out, rule, sparkline, status_line, verdict,
-    Micros, BOLD, DIM, RESET, YELLOW,
+    fmt_clock, fmt_duration, fmt_full, fmt_hm, fmt_hms, fmt_ms, out, rule, sparkline, status_line,
+    verdict, Micros, BOLD, DIM, RESET, YELLOW,
 };
 
 pub const PORT_ICMP_ONLY: u16 = 5735; // 0x1667: probe with ICMP instead of TCP
@@ -50,7 +50,9 @@ impl Default for Config {
 }
 
 /// Number of samples kept for the live ping graph.
-const GRAPH_LEN: usize = 40;
+const GRAPH_LEN: usize = 30;
+/// Seconds of match time covered by each recap line.
+const RECAP_SECS: i64 = 60;
 
 /// One finished match, in a stable text form used by replays and regression tests.
 #[derive(Clone, Debug, PartialEq)]
@@ -153,6 +155,12 @@ pub struct Monitor {
     match_count: u32,
     /// Recent latency samples for the live graph.
     graph: Vec<i64>,
+    /// Samples since the last recap line, and when that period started.
+    recap: Vec<i64>,
+    recap_start: Micros,
+    recap_loss: f32,
+    /// The last sample was a spike (alert once per spike, not every second).
+    in_spike: bool,
     probe_ticks: u32,
     /// Current time: the last packet timestamp or tick, whichever is later.
     now: Micros,
@@ -178,6 +186,10 @@ impl Monitor {
             last_psp: 0,
             match_count: 1,
             graph: Vec::new(),
+            recap: Vec::new(),
+            recap_start: 0,
+            recap_loss: 0.0,
+            in_spike: false,
             probe_ticks: 0,
             now: 0,
             finished: Vec::new(),
@@ -540,6 +552,10 @@ impl Monitor {
             return;
         }
         self.graph.clear();
+        self.recap.clear();
+        self.recap_start = self.now;
+        self.recap_loss = 0.0;
+        self.in_spike = false;
         let i = &self.info;
         let n = self.match_count;
         self.match_count += 1;
@@ -574,11 +590,50 @@ impl Monitor {
 
     /// Adds a latency sample to the live graph.
     fn print_sample(&mut self, ms: i64) {
+        if self.recap_start == 0 {
+            self.recap_start = self.now;
+        }
+        if (self.now - self.recap_start) / 1_000_000 >= RECAP_SECS {
+            self.print_recap();
+        }
         self.graph.push(ms);
         if self.graph.len() > GRAPH_LEN {
             self.graph.remove(0);
         }
+        self.recap.push(ms);
+        self.recap_loss = self.recap_loss.max(self.info.loss);
+
+        let spike = ms >= self.cfg.max_ping && ms < 1000;
+        if spike && !self.in_spike {
+            out(format!(
+                "  {YELLOW}!{RESET} {} ping spike {}\n",
+                fmt_hms(self.now),
+                fmt_ms(ms)
+            ));
+        }
+        self.in_spike = spike;
         self.draw_status();
+    }
+
+    /// One permanent line with the exact figures of the last period.
+    fn print_recap(&mut self) {
+        if let Some((min, avg, max)) = stats(&self.recap) {
+            let lost = self.recap.iter().filter(|&&ms| ms >= 1000).count();
+            let mut s = format!(
+                "  {DIM}{}{RESET}  ping avg {} ({min}-{max}), loss {:.1}%",
+                fmt_hm(self.recap_start),
+                fmt_ms(avg),
+                self.recap_loss
+            );
+            if lost > 0 {
+                s.push_str(&format!(", {lost} s without answer"));
+            }
+            s.push('\n');
+            out(s);
+        }
+        self.recap.clear();
+        self.recap_start = self.now;
+        self.recap_loss = self.info.loss;
     }
 
     fn draw_status(&self) {
@@ -587,8 +642,14 @@ impl Monitor {
         }
         let i = &self.info;
         let last = *self.graph.last().unwrap_or(&0);
+        let range = match stats(&self.graph) {
+            Some((min, avg, max)) => {
+                format!("{DIM}min{RESET} {min} {DIM}avg{RESET} {avg} {DIM}max{RESET} {max}")
+            }
+            None => String::new(),
+        };
         status_line(&format!(
-            "  ping {}  {}   loss {:.1}%   {}",
+            "  ping {} {}  {range}  loss {:.1}%  {}",
             sparkline(&self.graph),
             fmt_ms(last),
             i.loss,
@@ -598,6 +659,9 @@ impl Monitor {
 
     fn match_end(&mut self) {
         crate::util::keep_status_line();
+        if self.recap.len() >= 10 {
+            self.print_recap();
+        }
         let i = &self.info;
         let elapsed = (self.now - i.start) / 1_000_000;
         self.finished.push(MatchSummary {
@@ -732,6 +796,14 @@ impl Monitor {
     }
 }
 
+/// Min, average and max of the answered samples (no-answer samples are 1000 ms or more).
+fn stats(samples: &[i64]) -> Option<(i64, i64, i64)> {
+    let ok: Vec<i64> = samples.iter().copied().filter(|&ms| ms < 1000).collect();
+    let min = *ok.iter().min()?;
+    let max = *ok.iter().max()?;
+    Some((min, ok.iter().sum::<i64>() / ok.len() as i64, max))
+}
+
 /// Quotes a CSV field when needed (locations like `Paris, France` contain commas).
 fn csv_field(s: &str) -> String {
     if s.contains([',', '"']) {
@@ -852,6 +924,26 @@ mod tests {
             ),
             "{csv}"
         );
+    }
+
+    #[test]
+    fn recap_every_minute_and_spikes() {
+        let mut m = mon("recap");
+        m.info.active = true;
+        m.info.start = 1_000_000;
+        m.now = 1_000_000;
+        assert_eq!(stats(&[40, 1000, 20, 30]), Some((20, 30, 40)));
+        assert_eq!(stats(&[1000]), None);
+        for s in 0..59 {
+            m.now = 1_000_000 + s * 1_000_000;
+            m.print_sample(if s == 30 { 250 } else { 40 });
+            assert_eq!(m.in_spike, s == 30);
+        }
+        assert_eq!(m.recap.len(), 59);
+        m.now += 2_000_000;
+        m.print_sample(40);
+        assert_eq!(m.recap.len(), 1, "a new period starts after 60 s");
+        assert_eq!(m.graph.len(), GRAPH_LEN);
     }
 
     #[test]
