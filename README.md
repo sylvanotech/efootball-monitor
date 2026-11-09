@@ -68,7 +68,8 @@ touch the game's files or memory.
 
 ## Windows, macOS, Linux
 
-Not just Windows: the same tool runs natively on all three, with the same features. Use whatever machine you have.
+Not just Windows: the same tool runs natively on all three, with the same features (only the overlay window is
+Windows-only). Use whatever machine you have.
 
 | | Windows | macOS | Linux |
 |---|---|---|---|

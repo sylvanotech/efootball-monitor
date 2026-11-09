@@ -70,7 +70,8 @@ touche ni aux fichiers ni à la mémoire du jeu.
 
 ## Windows, macOS, Linux
 
-Pas seulement Windows : le même outil tourne nativement sur les trois, avec les mêmes fonctions. Utilise la machine
+Pas seulement Windows : le même outil tourne nativement sur les trois, avec les mêmes fonctions (seule la fenêtre
+overlay est réservée à Windows). Utilise la machine
 que tu as.
 
 | | Windows | macOS | Linux |
