@@ -9,7 +9,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::geo::GeoDb;
-use crate::util::{out, Micros};
+use crate::util::{fmt_hms, latency_color, out, rule, table, Cell, Micros, DIM, RESET};
 
 pub const SPEED_PORTS: [u16; 4] = [5521, 10000, 30000, 50000];
 
@@ -18,6 +18,43 @@ pub fn is_speed_port(p: u16) -> bool {
 }
 
 const MAX_PENDING: usize = 2000;
+
+/// City and country for cloud servers (also for lists saved by older versions), else the saved name.
+/// Location and provider of a speed test server, e.g. (`Cape Town, South Africa`, `AWS`).
+fn place(sv: &SpeedServer, geo: Option<&GeoDb>) -> (String, &'static str) {
+    use crate::cloud::{lookup, region_location, Provider};
+    match lookup(&sv.ip) {
+        Some((p, region)) => {
+            let provider = match p {
+                Provider::GoogleCloud => "Google",
+                Provider::Aws => "AWS",
+            };
+            let place = match region {
+                "GLOBAL" => "Anycast (no fixed location)",
+                r => region_location(r).unwrap_or(r),
+            };
+            (place.to_string(), provider)
+        }
+        None => (
+            geo.map_or_else(|| sv.region.replace('_', " "), |g| g.area(&sv.ip)),
+            "",
+        ),
+    }
+}
+
+fn lost_pct(sv: &SpeedServer) -> String {
+    let lost = sv.requests.saturating_sub(sv.responses);
+    if lost == 0 {
+        "-".into()
+    } else {
+        format!("{:.0}%", lost as f64 * 100.0 / sv.requests as f64)
+    }
+}
+
+/// Servers listed in the automatic summary (all of them with `speed`).
+const BRIEF_ROWS: usize = 10;
+/// Minimum time between two automatic summaries.
+const BRIEF_COOLDOWN_S: i64 = 120;
 const PENDING_TTL_MS: i64 = 2000;
 
 #[derive(Clone, Debug, Default)]
@@ -130,19 +167,12 @@ impl SpeedServers {
                 }
                 self.servers
                     .push(SpeedServer::new(server_ip, &geo.city(server_ip), port));
-                out(format!(
-                    "Found a new speed server {}:{}  Total: {}  {}\n",
-                    server_ip,
-                    port,
-                    self.servers.len(),
-                    geo.area(server_ip)
-                ));
                 self.should_print = true;
                 self.servers.len() - 1
             }
         };
         if self.pending.len() >= MAX_PENDING {
-            out("Warning: Test record buffer full!\n");
+            out("  ! speed test: too many pending requests, some are ignored\n");
             return;
         }
         self.servers[idx].requests += 1;
@@ -207,89 +237,118 @@ impl SpeedServers {
         v
     }
 
-    /// Brief table printed automatically after a test burst.
+    /// Table of the best servers, printed automatically after a test burst.
     pub fn print_brief(&self, now: Micros) {
-        let mut s = String::from("        server [min(ms)/avg(ms)] success/Total\n");
-        for (n, sv) in self
+        let mut s = format!("\n{}\n", rule(&format!("Speed test - {}", fmt_hms(now))));
+        let answered: Vec<&SpeedServer> = self
             .sorted()
             .into_iter()
             .filter(|s| s.responses > 0)
+            .collect();
+        let rows: Vec<Vec<Cell>> = answered
+            .iter()
+            .take(BRIEF_ROWS)
             .enumerate()
-        {
-            if n % 3 == 0 && n != 0 {
-                s.push('\n');
-            }
-            s.push_str(&format!(
-                "{:>18}[{:3}/{:3.0}ms] {}/{}  ",
-                sv.region,
-                sv.min,
-                sv.avg(),
-                sv.responses,
-                sv.requests
-            ));
-        }
-        s.push_str(&format!(
-            "\n\n=== Speed Test Results Last updated: {}\n",
-            crate::util::fmt_full(now)
+            .map(|(n, sv)| {
+                let (place, provider) = place(sv, None);
+                let avg = sv.avg().round() as i64;
+                vec![
+                    ((n + 1).to_string(), DIM),
+                    (place, ""),
+                    (provider.to_string(), DIM),
+                    (format!("{avg} ms"), latency_color(avg)),
+                    (sv.min.to_string(), ""),
+                    (format!("{}/{}", sv.responses, sv.requests), ""),
+                    (lost_pct(sv), ""),
+                ]
+            })
+            .collect();
+        s.push_str(&table(
+            &["#", "Server", "Provider", "Avg", "Min", "Answered", "Lost"],
+            &rows,
+            &[true, false, false, true, true, true, true],
         ));
-        out(s);
-    }
-
-    /// Detailed table (`sp` command).
-    pub fn print_detail(&self, geo: &GeoDb) {
-        let mut s = String::from(
-            "Server               Min(ms) Max(ms) Avg(ms) Loss% Success/Total  Region             \n\
-             -------------------   ------- ------- ------- ------ ------------  ----------------  \n",
-        );
-        for (i, sv) in self.sorted().into_iter().enumerate() {
-            let loss = if sv.requests > 0 {
-                (1.0 - sv.responses as f64 / sv.requests as f64) * 100.0
-            } else {
-                100.0
-            };
-            if sv.responses > 0 {
-                s.push_str(&format!(
-                    "{:2} {}:{:<5} {:7} {:7} {:7.0} {:7.0}% {}/{}  {:<30} \n",
-                    i,
-                    sv.ip,
-                    sv.port,
-                    sv.min,
-                    sv.max,
-                    sv.avg(),
-                    loss,
-                    sv.responses,
-                    sv.requests,
-                    geo.area(&sv.ip)
-                ));
-            } else {
-                s.push_str(&format!(
-                    "{:2} {}:{:<5} {:>7} {:>7} {:>7} {:7.0}% {}/{}(No response)  {:<30} \n",
-                    i,
-                    sv.ip,
-                    sv.port,
-                    "-",
-                    "-",
-                    "-",
-                    loss,
-                    sv.responses,
-                    sv.requests,
-                    geo.area(&sv.ip)
-                ));
-            }
-        }
-        out(s);
-    }
-
-    /// `hh` command.
-    pub fn print_list(&self) {
-        let mut s = String::new();
-        for sv in &self.servers {
+        let more = answered.len().saturating_sub(BRIEF_ROWS);
+        if more > 0 {
             s.push_str(&format!(
-                "{{\"{}\", \"{}\", {}}},\n",
-                sv.ip, sv.region, sv.port
+                "  {DIM}... and {more} more servers. Type 'speed' for the full list.{RESET}\n"
             ));
         }
         out(s);
+    }
+
+    /// Full table (`speed` command).
+    pub fn print_detail(&self, geo: &GeoDb) {
+        if self.servers.is_empty() {
+            out("  No speed test seen yet. It runs when you start searching for a match.\n");
+            return;
+        }
+        let rows: Vec<Vec<Cell>> = self
+            .sorted()
+            .into_iter()
+            .enumerate()
+            .map(|(n, sv)| {
+                let (place, provider) = place(sv, Some(geo));
+                let mut row = vec![
+                    ((n + 1).to_string(), DIM),
+                    (place, ""),
+                    (provider.to_string(), DIM),
+                ];
+                if sv.responses > 0 {
+                    let avg = sv.avg().round() as i64;
+                    row.extend([
+                        (sv.min.to_string(), ""),
+                        (format!("{avg} ms"), latency_color(avg)),
+                        (sv.max.to_string(), ""),
+                    ]);
+                } else {
+                    row.extend([
+                        ("-".to_string(), ""),
+                        ("no answer".to_string(), DIM),
+                        ("-".to_string(), ""),
+                    ]);
+                }
+                row.push((format!("{}/{}", sv.responses, sv.requests), ""));
+                row.push((lost_pct(sv), ""));
+                row
+            })
+            .collect();
+        out(format!(
+            "\n{}",
+            table(
+                &["#", "Server", "Provider", "Min", "Avg", "Max", "Answered", "Lost"],
+                &rows,
+                &[true, false, false, true, true, true, true, true],
+            )
+        ));
+    }
+
+    /// `servers` command: every known server with its address.
+    pub fn print_list(&self) {
+        if self.servers.is_empty() {
+            out("  No speed test server known yet.\n");
+            return;
+        }
+        let rows: Vec<Vec<Cell>> = self
+            .servers
+            .iter()
+            .map(|sv| {
+                let (place, provider) = place(sv, None);
+                vec![
+                    (place, ""),
+                    (provider.to_string(), DIM),
+                    (format!("{}:{}", sv.ip, sv.port), ""),
+                ]
+            })
+            .collect();
+        out(format!(
+            "\n{}",
+            table(
+                &["Server", "Provider", "Address"],
+                &rows,
+                &[false, false, false]
+            )
+        ));
     }
 
     pub fn save(&self) {
@@ -345,6 +404,7 @@ impl SpeedServers {
             && !server_match_running
             && self.should_print
             && requests > 20
+            && (self.last_print == 0 || (now - self.last_print) / 1_000_000 >= BRIEF_COOLDOWN_S)
         {
             self.print_brief(now);
             if responses > 10 {
@@ -367,7 +427,7 @@ mod tests {
         assert!(s.servers.is_empty());
         let geo = GeoDb::default();
         s.on_request("34.92.192.14", 5521, 7, 1_000_000, &geo);
-        assert_eq!(s.servers[0].region, "asia-east2");
+        assert_eq!(s.servers[0].region, "Hong_Kong");
         s.on_request("34.92.192.14", 5521, 8, 1_001_000, &geo);
         s.on_response("34.92.192.14", 8, 1_031_000);
         s.on_response("34.92.192.14", 7, 1_042_000);
@@ -376,6 +436,24 @@ mod tests {
         s.on_request("1.2.3.4", 50000, 1, 0, &geo);
         assert_eq!(s.servers.last().unwrap().port, 50000);
         assert!(s.should_print);
+    }
+
+    #[test]
+    fn tables_show_place_and_provider() {
+        let mut s = SpeedServers::in_memory();
+        let geo = GeoDb::default();
+        s.on_request("34.35.84.61", 5521, 1, 0, &geo);
+        s.on_response("34.35.84.61", 1, 57_000);
+        s.on_request("13.244.190.54", 5521, 2, 0, &geo);
+        assert_eq!(
+            place(&s.servers[0], None),
+            ("Johannesburg, South Africa".to_string(), "Google")
+        );
+        assert_eq!(place(&s.servers[1], None).1, "AWS");
+        assert_eq!(lost_pct(&s.servers[1]), "100%");
+        s.print_detail(&geo);
+        s.print_list();
+        s.print_brief(1_000_000);
     }
 
     #[test]

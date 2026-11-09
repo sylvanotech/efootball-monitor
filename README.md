@@ -6,6 +6,8 @@
 
 **Never trust the bars.**
 
+Runs on **Windows, macOS and Linux**. Free and open source.
+
 *[Version française](README.fr.md)*
 
 eFootball shows you five bars, and then your passes arrive half a second late. This tool watches the game's network
@@ -39,45 +41,73 @@ With `--overlay` (Windows), a small window stays on top of the game with just wh
 
 ```text
 CLIENT-SERVER  ·  Google Cloud asia-northeast1
-Japan-Tokyo-Tokyo
+Server: Tokyo, Japan
 182 ms    0.0% loss
 ```
+
+**The overlay needs eFootball in borderless windowed mode** (or windowed). In fullscreen, Windows draws the game
+over every other window, so the overlay stays hidden behind it. The beep works in every mode.
 
 The tool never accepts or declines anything itself, you decide in the game.
 
 ## What it does
 
 - Detects each match and tells you if it's client-server (through a Konami relay) or peer-to-peer.
-- Shows the server's cloud region (Google Cloud or AWS, e.g. `asia-northeast1`, `eu-west-3`), or the opponent's
-  country and city if you add the IP2Location database.
+- Shows where the server is (e.g. `Tokyo, Japan`, `Johannesburg, South Africa`, from its Google Cloud or AWS region),
+  or the opponent's country and city if you add the IP2Location database.
 - Measures the server's response time at match start from the game's own handshake, then the latency every second
-  as colored dots.
+  as a small live graph, with a GOOD / OK / FAR hint to help you accept or decline.
 - Computes packet loss (server/opponent to you) and prints a line when it moves by more than 4 points.
 - Beeps when a match is found, so you can leave the window minimized.
 - Decodes the speed test the game runs before matchmaking: latency and loss to each Konami server it pings
-  (`sp` command).
+  (`speed` command).
 - Logs every match to `matchlogs.csv` (duration, server, latency, worst loss). After a few evenings you can see which
   servers and times work for you.
 - Small always-on-top window with the current match (`--overlay`, Windows), or a text file for an OBS overlay.
 - Can record a session to `.pcap`, replay it later, and anonymize it before sharing.
 
 It only reads a copy of the traffic, like Wireshark does. It doesn't block, delay or change any packet, and doesn't
-touch the game's files or memory. Works on Windows, Linux and macOS, and with PlayStation/Xbox if your router or
-switch can mirror the console's port.
+touch the game's files or memory.
+
+## Windows, macOS, Linux
+
+Not just Windows: the same tool runs natively on all three, with the same features (only the overlay window is
+Windows-only). Use whatever machine you have.
+
+| | Windows | macOS | Linux |
+|---|---|---|---|
+| Playing on PC | ✓ | (eFootball is Windows only) | ✓ with Proton / Steam Deck |
+| Playing on PlayStation / Xbox | ✓ | ✓ | ✓ |
+| Overlay window (`--overlay`) | ✓ | | |
+
+Console players: run it on any computer connected to a router or switch that can mirror the console's port (see
+[Requirements](#requirements)).
+
+macOS and Linux builds are new: if you try them, feedback is welcome in the issues.
 
 ## Example
 
 ```text
-21:04:12   1    client-server (Google Cloud asia-northeast1) match from  Japan-Tokyo-Tokyo
-                local 192.168.1.20:52114  Remote 34.84.43.65:30123
-  38ms 41 39 40 40 42.......o..   41
-21:07:55 fluctuation: 12.5% loss
-...
-UTC 2026/11/09 20:13:40 Client-server match ended, cancelled or switched to TCP
-summary:  elapse 09:28 latency: initial/avg/min/max 38/41/38/97   Max loss rate: 12.5%
+── Match 3 - 21:04:12 ──────────────────────────────────────
+  Client-server (you and your opponent both play through this server)
+  Server:   Tokyo, Japan (Google Cloud asia-northeast1)
+  Ping:     182 ms   FAR - consider declining
+
+── Match 4 - 21:05:40 ──────────────────────────────────────
+  Client-server (you and your opponent both play through this server)
+  Server:   Paris, France (AWS eu-west-3)
+  Ping:     38 ms   GOOD
+  21:05  ping avg 41 ms (38-52), loss 0.0%
+  21:06  ping avg 44 ms (38-97), loss 0.0%
+  ! 21:07:12 ping spike 212 ms
+  ! 21:07:55 packet loss 12.5% (was 0.0%)
+  21:07  ping avg 52 ms (39-212), loss 12.5%
+  ...
+  ping ▁▁▂▁▁▁▃▁▁▂▁▁▁▅▁▁▁▂▁▁ 41 ms  min 38 avg 42 max 97  loss 0.0%  09:28
+  Match over - 9 min 28 s - ping avg 41 ms (min 38, max 97) - worst loss 12.5%
 ```
 
-(Made-up values. In the terminal the dots are colored by latency.)
+(Made-up values. In the terminal, ping values and bars are colored: green, yellow, orange, red.)
 
 ## Quick start (Windows)
 
@@ -89,7 +119,7 @@ For the on-top window, start it with `efootball-monitor.exe --overlay` (or add `
 shortcut's target). The game has to be in windowed or borderless mode: Windows doesn't draw anything over exclusive
 fullscreen.
 
-To see cities for servers and opponents, add the free IP2Location files (see [Installation](#installation)).
+To see where peer-to-peer opponents are, add the free IP2Location files (see [Installation](#installation)).
 
 This is a community project. It is not affiliated with or endorsed by Konami.
 
@@ -112,14 +142,14 @@ traffic on that adapter, so will this.
 
 1. Windows only: install [Npcap](https://npcap.com/#download).
 2. Download the archive for your system from [Releases](../../releases) and extract it somewhere.
-3. Optional: the free IP2Location LITE DB3 database, for cities.
+3. Optional: the free IP2Location LITE DB3 database, to locate peer-to-peer opponents.
    - Make a free account on <https://lite.ip2location.com>.
    - Download DB3 LITE BIN for IPv4 (`IP2LOCATION-LITE-DB3.BIN`), and the IPv6 one if you want
      (`IP2LOCATION-LITE-DB3.IPV6.BIN`).
    - Put the `.BIN` files next to the program.
 
-   Without them, Konami servers still show their cloud region (`Google Cloud asia-northeast1`, `AWS eu-west-3`...),
-   but peer-to-peer opponents show up as `unknown`.
+   Without them, Konami servers still show their city and country (`Tokyo, Japan`, `Paris, France`...), but
+   peer-to-peer opponents show up as `unknown`.
 
 ## Usage
 
@@ -133,8 +163,9 @@ efootball-monitor --list       # just list the interfaces
 
 While it runs you can type:
 
-- `sp` + Enter: speed test details (min/max/avg latency and loss per Konami server)
-- `hh` + Enter: speed test servers found so far
+- `speed` + Enter: speed test details (min/avg/max latency and loss per Konami server)
+- `servers` + Enter: speed test servers found so far, with their addresses
+- `help` + Enter: commands and colors
 
 Options:
 
@@ -147,39 +178,48 @@ Options:
 | `--overlay` | off | small always-on-top window with the current match (Windows). Drag it to move it, right-click to hide it until the next match |
 | `--overlay-file <FILE>` | off | write the live status to a text file (OBS text source etc.) |
 | `--record <FILE>` | off | also save the game traffic to a `.pcap` |
+| `--max-ping <MS>` | `120` | matches at or above this ping are flagged `FAR` |
+| `--show-ip` | off | show IP addresses and ports (hidden by default) |
+| `--ascii` | off | plain characters, if the ping graph shows up as boxes in an old console |
 
 ## Reading the output
 
-When a match starts you get the time, match number, mode, server provider/location, and the local and remote
-addresses. For client-server matches, the cyan number is the server's response time at the start of the match.
+**When a match is found** you get a block with the match number and time, the mode, a location, and the ping
+measured by the game itself at the start of the match. Watch which location it is:
 
-During a client-server match the server is probed every second (TCP connect, or ping for servers on port 5735).
-The first five values are printed as numbers, then one character per second:
+- **Client-server** shows `Server:`, the Konami server you and your opponent both connect to. Your opponent's own
+  location can't be seen in this mode.
+- **Peer-to-peer** shows `Opponent:`, where your opponent is (needs the IP2Location files, otherwise `unknown`).
 
-| Char | Latency |
-|---|---|
-| `.` white | < 15 ms |
-| `.` green | < 30 ms |
-| `.` yellow | < 50 ms |
-| `.` blue | < 75 ms |
-| `.` magenta | < 100 ms |
-| `o` cyan | < 125 ms |
-| `O` blue | < 150 ms |
-| `P` magenta | < 200 ms |
-| `Q` red | < 250 ms |
-| `R` red | < 400 ms |
-| `X` red | 400 ms or more, or no answer |
+The ping comes with a hint:
 
-In peer-to-peer, latency comes from the keep-alive messages the game exchanges with the opponent.
+- `GOOD`: under 60 ms
+- `OK`: between 60 ms and the `--max-ping` limit (120 ms by default)
+- `FAR - consider declining`: at or above the limit
 
-`fluctuation: x% loss` shows up when loss changes by more than 4 points. The game sends data in groups of 256
+**During the match**, one line is updated every second: a small graph of the last 30 seconds (one bar per second,
+taller = slower), the current ping, the exact min / average / max over those 30 seconds, the packet loss and the
+match time. Colors: green under 50 ms, yellow under 100 ms, orange under 200 ms, red above or no answer.
+
+Above it, a line stays in the history every minute with the exact figures of that minute
+(`21:06  ping avg 44 ms (38-97), loss 0.0%`), so you can scroll back through the whole match. Each time the ping
+goes over `--max-ping`, `! ping spike 212 ms` is printed with the time.
+
+In client-server, the live ping comes from our own probes to the server (TCP connect, or ping for servers on port
+5735), so it can differ a bit from the game's own measurement in the header. In peer-to-peer, it comes from the
+keep-alive messages the game exchanges with the opponent.
+
+**`! packet loss x% (was y%)`** shows up when loss changes by more than 4 points. The game sends data in groups of 256
 messages, so loss is counted per group, in the server/opponent → you direction.
 
-A match is considered over after 8 s without traffic (client-server) or 3 s (peer-to-peer). If a client-server match
-"ends" right after it started, the game probably switched to TCP, which the tool can't see.
+**End of match**: after 8 s without traffic (client-server) or 3 s (peer-to-peer) you get a one-line summary. A
+match that ends within 60 s was most likely declined or cancelled. In client-server it can also mean the game switched
+to TCP, which the tool can't see.
 
-Before matchmaking the game pings a bunch of Konami servers. A few seconds after that, a short summary is printed
-(`region [min/avg ms] answered/sent`). `sp` gives the full table.
+**Speed test**: before matchmaking the game pings a bunch of Konami servers. A few seconds after that, a table shows
+the 10 servers with the best average ping (at most once every 2 minutes). `speed` gives the full table.
+
+IP addresses are hidden by default (handy when streaming). Use `--show-ip` to see them.
 
 ### matchlogs.csv
 
