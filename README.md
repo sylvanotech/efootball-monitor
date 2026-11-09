@@ -12,6 +12,8 @@ eFootball shows you five bars, and then your passes arrive half a second late. T
 traffic so you can see what is actually going on: which server you got (or which opponent, in peer-to-peer), the
 latency, and the packet loss, for the whole match.
 
+Best part: you see all that **before you accept the match**. Too far, too laggy? Decline it and pick your next one.
+
 ## Why
 
 The bars only give you a rough idea, once, when the match is found. They don't say where the server is, whether
@@ -21,6 +23,7 @@ you're in peer-to-peer, or what happens after kick-off. Here's what you get with
 |---|---|---|
 | Server / opponent location | no | cloud provider + region, or country/city |
 | Client-server or peer-to-peer | no | yes |
+| Know before accepting a match | no | location + latency on the accept screen |
 | Latency in ms | no | at match start, then every second |
 | Packet loss | no | yes, with a warning when it jumps |
 | During the match | no | yes, until the end |

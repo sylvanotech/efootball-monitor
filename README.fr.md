@@ -12,6 +12,9 @@ Le jeu affiche 5 barres, et pourtant tes passes partent avec une demi-seconde de
 réseau d'eFootball pour te montrer ce qui se passe vraiment : sur quel serveur tu joues (ou contre quel adversaire, en
 peer-to-peer), la latence et la perte de paquets, pendant tout le match.
 
+Et surtout, tu vois tout ça **avant d'accepter le match**. Trop loin, trop de ping ? Tu refuses et tu choisis le
+suivant.
+
 ## Pourquoi
 
 Les barres donnent une vague idée, une seule fois, quand le match est trouvé. Elles ne disent pas où est le serveur,
@@ -21,6 +24,7 @@ si tu es en peer-to-peer, ni ce qui se passe après le coup d'envoi. Avec le mon
 |---|---|---|
 | Localisation serveur / adversaire | non | fournisseur cloud + région, ou pays/ville |
 | Client-server ou peer-to-peer | non | oui |
+| Savoir avant d'accepter un match | non | localisation + latence sur l'écran d'acceptation |
 | Latence en ms | non | au début du match, puis chaque seconde |
 | Perte de paquets | non | oui, avec un message quand elle bouge |
 | Pendant le match | non | oui, jusqu'à la fin |
